@@ -16,26 +16,23 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - run: npm install
-        working-directory: wonder-plus-reservation-scraper
 
       - run: npx playwright install --with-deps chromium
-        working-directory: wonder-plus-reservation-scraper
 
       # ログイン済みセッション(storage-state)をキャッシュし、毎回2段階認証が
       # 走らないようにする。セッションが失効していれば各スクレイパーが
       # 通常どおり再ログインする。
       - uses: actions/cache@v4
         with:
-          path: wonder-plus-reservation-scraper/storage-state
+          path: storage-state
           key: storage-state-${{ github.run_id }}
           restore-keys: |
             storage-state-
 
       - name: Run scrapers
-        working-directory: wonder-plus-reservation-scraper
         env:
           # 機密でない値(ID・ラベル・列名パターン等)は Variables から。
           SHEET_ID: ${{ vars.SHEET_ID }}
