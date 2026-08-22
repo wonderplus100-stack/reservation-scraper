@@ -1,4 +1,4 @@
-import { quoteSheetName, readSheetValues } from "../lib/sheetsClient.mjs";
+import { fullSheetRange, readSheetValues } from "../lib/sheetsClient.mjs";
 
 // Googleフォームはそれ自体にログインが不要 — フォームの回答が書き込まれる
 // 連携スプレッドシートを、サービスアカウントに「閲覧者」共有した上で直接読む。
@@ -70,7 +70,7 @@ export async function collect() {
   const obtainedAt = new Date().toISOString();
 
   for (const account of accounts) {
-    const values = await readSheetValues(account.spreadsheetId, quoteSheetName(account.sheetName));
+    const values = await readSheetValues(account.spreadsheetId, fullSheetRange(account.sheetName));
     const reservations = extractReservations(values, account);
     for (const reservation of reservations) {
       rows.push({
