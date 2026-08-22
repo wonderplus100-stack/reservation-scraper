@@ -1,0 +1,23 @@
+{
+  "name": "wonder-plus-reservation-scraper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Wonder+ の集客状況を各媒体(こくちーずPRO/Peatix/つなげーと/Googleフォーム)から自動収集し、プライベートなGoogleスプレッドシートに集計するバッチ",
+  "scripts": {
+    "scrape:forms": "node run.mjs --only=googleForms",
+    "scrape:kokuchpro": "node run.mjs --only=kokuchpro",
+    "scrape:peatix": "node run.mjs --only=peatix",
+    "scrape:tunagate": "node run.mjs --only=tunagate",
+    "scrape:all": "node run.mjs",
+    "codegen:kokuchpro": "playwright codegen https://www.kokuchpro.com/auth/login/",
+    "codegen:peatix": "playwright codegen https://peatix.com/signin",
+    "codegen:tunagate": "playwright codegen https://tunagate.com/users/sign_in"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "googleapis": "^140.0.1",
+    "otpauth": "^9.3.4",
+    "playwright": "^1.47.0"
+  }
+}

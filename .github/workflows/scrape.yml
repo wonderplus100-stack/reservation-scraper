@@ -1,0 +1,71 @@
+name: scrape-reservations
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # 30分おき(UTC基準)。まずは workflow_dispatch で手動実行して動作確認してから
+    # このスケジュールを有効にすること。
+    - cron: "*/30 * * * *"
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm install
+        working-directory: wonder-plus-reservation-scraper
+
+      - run: npx playwright install --with-deps chromium
+        working-directory: wonder-plus-reservation-scraper
+
+      # ログイン済みセッション(storage-state)をキャッシュし、毎回2段階認証が
+      # 走らないようにする。セッションが失効していれば各スクレイパーが
+      # 通常どおり再ログインする。
+      - uses: actions/cache@v4
+        with:
+          path: wonder-plus-reservation-scraper/storage-state
+          key: storage-state-${{ github.run_id }}
+          restore-keys: |
+            storage-state-
+
+      - name: Run scrapers
+        working-directory: wonder-plus-reservation-scraper
+        env:
+          # 機密でない値(ID・ラベル・列名パターン等)は Variables から。
+          SHEET_ID: ${{ vars.SHEET_ID }}
+          FORM_1_ACCOUNT_LABEL: ${{ vars.FORM_1_ACCOUNT_LABEL }}
+          FORM_1_SPREADSHEET_ID: ${{ vars.FORM_1_SPREADSHEET_ID }}
+          FORM_1_SHEET_NAME: ${{ vars.FORM_1_SHEET_NAME }}
+          FORM_1_NAME_COLUMN_PATTERN: ${{ vars.FORM_1_NAME_COLUMN_PATTERN }}
+          FORM_1_EVENT_COLUMN_PATTERN: ${{ vars.FORM_1_EVENT_COLUMN_PATTERN }}
+          FORM_2_ACCOUNT_LABEL: ${{ vars.FORM_2_ACCOUNT_LABEL }}
+          FORM_2_SPREADSHEET_ID: ${{ vars.FORM_2_SPREADSHEET_ID }}
+          FORM_2_SHEET_NAME: ${{ vars.FORM_2_SHEET_NAME }}
+          FORM_2_NAME_COLUMN_PATTERN: ${{ vars.FORM_2_NAME_COLUMN_PATTERN }}
+          FORM_2_EVENT_COLUMN_PATTERN: ${{ vars.FORM_2_EVENT_COLUMN_PATTERN }}
+          KOKUCHPRO_1_ACCOUNT_LABEL: ${{ vars.KOKUCHPRO_1_ACCOUNT_LABEL }}
+          KOKUCHPRO_1_EMAIL: ${{ vars.KOKUCHPRO_1_EMAIL }}
+          PEATIX_1_ACCOUNT_LABEL: ${{ vars.PEATIX_1_ACCOUNT_LABEL }}
+          PEATIX_1_EMAIL: ${{ vars.PEATIX_1_EMAIL }}
+          PEATIX_2_ACCOUNT_LABEL: ${{ vars.PEATIX_2_ACCOUNT_LABEL }}
+          PEATIX_2_EMAIL: ${{ vars.PEATIX_2_EMAIL }}
+          TUNAGATE_1_ACCOUNT_LABEL: ${{ vars.TUNAGATE_1_ACCOUNT_LABEL }}
+          TUNAGATE_1_EMAIL: ${{ vars.TUNAGATE_1_EMAIL }}
+          HEADLESS: "true"
+          # 機密情報(パスワード・TOTP・サービスアカウント鍵)は Secrets から。
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          KOKUCHPRO_1_PASSWORD: ${{ secrets.KOKUCHPRO_1_PASSWORD }}
+          KOKUCHPRO_1_TOTP_SECRET: ${{ secrets.KOKUCHPRO_1_TOTP_SECRET }}
+          PEATIX_1_PASSWORD: ${{ secrets.PEATIX_1_PASSWORD }}
+          PEATIX_1_TOTP_SECRET: ${{ secrets.PEATIX_1_TOTP_SECRET }}
+          PEATIX_2_PASSWORD: ${{ secrets.PEATIX_2_PASSWORD }}
+          PEATIX_2_TOTP_SECRET: ${{ secrets.PEATIX_2_TOTP_SECRET }}
+          TUNAGATE_1_PASSWORD: ${{ secrets.TUNAGATE_1_PASSWORD }}
+          TUNAGATE_1_TOTP_SECRET: ${{ secrets.TUNAGATE_1_TOTP_SECRET }}
+        run: node run.mjs
