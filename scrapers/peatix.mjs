@@ -23,7 +23,7 @@ function accountsFromEnv() {
 
 // Peatixのログインは「メール入力→Next→パスワード入力」の2段階(SPA)。実アカウントで確認済み。
 async function login(page, account) {
-  await page.goto(LOGIN_URL);
+  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
   await page.getByPlaceholder("メール").fill(account.email);
   await page.getByRole("button", { name: "Next" }).click();
 

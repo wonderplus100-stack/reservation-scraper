@@ -30,7 +30,9 @@ function accountsFromEnv() {
 }
 
 async function login(page, account) {
-  await page.goto(LOGIN_URL);
+  // 広告読み込みで"load"イベントが遅延することがあるため、
+  // DOM構築完了時点(domcontentloaded)で次に進む。
+  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
   await page.locator('input[type="text"]').first().fill(account.email);
   const passwordInput = page.locator('input[type="password"]').first();
   await passwordInput.fill(account.password);

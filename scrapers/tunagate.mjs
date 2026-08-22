@@ -28,7 +28,7 @@ function accountsFromEnv() {
 // つなげーとのログインは「メール入力→ログインボタン→(次のステップで)パスワード入力」
 // の2段階(実アカウントで確認済み)。
 async function login(page, account) {
-  await page.goto(LOGIN_URL);
+  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
   await page.getByPlaceholder("your@email.com").fill(account.email);
   await Promise.all([
     page.waitForLoadState("networkidle").catch(() => {}),
