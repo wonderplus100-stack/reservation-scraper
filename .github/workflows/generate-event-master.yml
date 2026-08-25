@@ -1,0 +1,33 @@
+name: generate-event-master
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true にすると書き込みせず件数確認のみ行う"
+        required: false
+        default: "false"
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm install
+
+      - name: Generate EventMaster rows from Unmapped
+        env:
+          SHEET_ID: ${{ vars.SHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            node scripts/generate-event-master.mjs --dry-run
+          else
+            node scripts/generate-event-master.mjs
+          fi
