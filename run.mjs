@@ -17,6 +17,20 @@ import * as tunagate from "./scrapers/tunagate.mjs";
 
 const SCRAPERS = { googleForms, kokuchpro, peatix, tunagate };
 
+// 1媒体あたりの上限時間。こくちーずPRO等がCI環境でハングし、
+// GitHub Actionsのジョブ上限(15分)を使い切って強制キャンセルされる事故が
+// 繰り返し発生したため、1媒体が固まっても他の媒体・シート更新へ確実に
+// 進めるように上限を設ける。
+const SCRAPER_TIMEOUT_MS = 3 * 60 * 1000;
+
+function withTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}: ${ms / 1000}秒でタイムアウトしました`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function parseOnlyArg() {
   const arg = process.argv.find((a) => a.startsWith("--only="));
   if (!arg) return Object.keys(SCRAPERS);
@@ -33,7 +47,7 @@ async function collectAll(targets) {
     }
     console.log(`--- collecting: ${name} ---`);
     try {
-      const collected = await scraper.collect();
+      const collected = await withTimeout(scraper.collect(), SCRAPER_TIMEOUT_MS, name);
       console.log(`${name}: ${collected.length}件`);
       rows.push(...collected);
     } catch (err) {
@@ -129,7 +143,14 @@ async function main() {
   console.log(`Summary更新: ${summary.length}行`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exitCode = 1;
-});
+main()
+  .catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    // タイムアウトで見捨てたスクレイパーのブラウザが残っている場合、
+    // そのハンドルがイベントループを掴んだままプロセスが終了しない
+    // ことがあるため、明示的に終了させる。
+    process.exit(process.exitCode ?? 0);
+  });
