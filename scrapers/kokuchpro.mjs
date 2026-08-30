@@ -58,13 +58,22 @@ async function login(page, account) {
   }
   console.error(`[kokuchpro診断] page.goto成功: url=${page.url()}`);
 
-  try {
-    await page.locator('input[type="text"]').first().fill(account.email, { timeout: 30000 });
+  // fill()自体のtimeoutオプションだけに頼ると、ページが繰り返しリダイレクト/
+  // 再読み込みするようなケースで想定より長く粘ってしまう可能性があるため、
+  // Playwright側の時計とは独立したsetTimeoutで確実に45秒で打ち切り診断を出す。
+  const formTask = (async () => {
+    await page.locator('input[type="text"]').first().fill(account.email, { timeout: 40000 });
     const passwordInput = page.locator('input[type="password"]').first();
-    await passwordInput.fill(account.password, { timeout: 30000 });
+    await passwordInput.fill(account.password, { timeout: 40000 });
     await submitForm(page, passwordInput);
+  })();
+  const hardDeadline = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("ログインフォーム操作が45秒で完了しなかった")), 45000)
+  );
+  try {
+    await Promise.race([formTask, hardDeadline]);
   } catch (err) {
-    const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 300)).catch(() => "");
+    const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 300)).catch(() => "(取得失敗)");
     console.error(`[kokuchpro診断] ログインフォーム操作失敗: url=${page.url()} bodyText=${JSON.stringify(bodyText)}`);
     throw err;
   }
