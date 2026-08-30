@@ -29,10 +29,33 @@ function accountsFromEnv() {
   return accounts;
 }
 
+// CI環境でpage.goto自体が60秒フルにタイムアウトする問題の原因切り分け用。
+// Node側の生fetch(ブラウザを介さない)で同じURLに到達できるか確認する。
+// これが成功するのにブラウザのgotoだけ失敗する場合、IP丸ごとブロックではなく
+// ブラウザ/ヘッドレス検知(bot対策のJSチャレンジ等)が疑わしいと判断できる。
+async function diagnoseNetwork(url) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    const text = (await res.text()).slice(0, 300);
+    console.error(`[kokuchpro診断] fetch成功 status=${res.status} body=${JSON.stringify(text)}`);
+  } catch (e) {
+    console.error(`[kokuchpro診断] fetchも失敗: ${e.message}`);
+  }
+}
+
 async function login(page, account) {
   // 広告読み込みで"load"イベントが遅延することがあるため、
   // DOM構築完了時点(domcontentloaded)で次に進む。
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
+  try {
+    await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
+  } catch (err) {
+    console.error(`[kokuchpro診断] page.goto失敗: url=${page.url()}`);
+    await diagnoseNetwork(LOGIN_URL);
+    throw err;
+  }
   await page.locator('input[type="text"]').first().fill(account.email);
   const passwordInput = page.locator('input[type="password"]').first();
   await passwordInput.fill(account.password);

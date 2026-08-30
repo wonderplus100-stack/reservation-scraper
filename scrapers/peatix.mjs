@@ -34,9 +34,19 @@ async function logDiagnostics(page, label) {
   }
 }
 
-// Peatixのログインは「メール入力→Next→パスワード入力」の2段階(SPA)。実アカウントで確認済み。
+// Peatixのログインは「Sign in with emailをクリック→メール入力→Next→パスワード入力」の
+// 3段階(SPA)。以前はランディング画面が出ずメール欄がいきなり表示されていたが、
+// CI環境での診断ログにより、まず選択画面(Google/Appleでサインイン or
+// Sign in with email)が表示され、"Sign in with email"をクリックしないと
+// メール入力欄が現れないことが判明した。
 async function login(page, account) {
   await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
+
+  const signInWithEmail = page.getByText("Sign in with email");
+  if (await signInWithEmail.count().catch(() => 0)) {
+    await signInWithEmail.first().click();
+  }
+
   try {
     await page.getByPlaceholder("メール").fill(account.email, { timeout: 20000 });
   } catch (err) {
