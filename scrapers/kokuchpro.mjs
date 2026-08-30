@@ -93,7 +93,11 @@ async function login(page, account) {
 async function listEventAdminUrls(page) {
   const urls = new Set();
   for (const listUrl of EVENT_LIST_URLS) {
-    await page.goto(listUrl);
+    // ログインページ同様、広告読み込みで"load"イベントが遅延するため
+    // domcontentloadedで次に進む(これが未対応だったため、2つのURLの
+    // goto()がそれぞれ最大60秒粘り、外側の180秒タイムアウトを
+    // 診断ログなしで消費してしまっていたと考えられる)。
+    await page.goto(listUrl, { waitUntil: "domcontentloaded" });
     const hrefs = await page.locator('a[href*="/admin/e-"]').evaluateAll((els) => els.map((el) => el.href));
     for (const href of hrefs) urls.add(href.split("?")[0]);
   }
@@ -103,7 +107,7 @@ async function listEventAdminUrls(page) {
 // イベント管理画面の開催日セレクトボックスを1つずつ選び、
 // 各開催日に対応する d-ID とラベル(日時)を集める。
 async function listSessions(page, eventAdminUrl) {
-  await page.goto(eventAdminUrl);
+  await page.goto(eventAdminUrl, { waitUntil: "domcontentloaded" });
   const select = page.locator("select").first();
   const optionCount = await select.locator("option").count();
   const sessions = [];
@@ -134,7 +138,9 @@ async function getEventTitle(page) {
 
 // 参加者管理ページで「参加者名簿のダウンロード」ボタンを押し、CSVを取得して氏名を抽出する。
 async function downloadReservationNames(page, eventHash, dateId) {
-  await page.goto(`https://www.kokuchpro.com/admin/participant/e-${eventHash}/d-${dateId}/`);
+  await page.goto(`https://www.kokuchpro.com/admin/participant/e-${eventHash}/d-${dateId}/`, {
+    waitUntil: "domcontentloaded"
+  });
 
   const downloadButton = page.getByText("参加者名簿のダウンロード", { exact: false });
   if ((await downloadButton.count()) === 0) {
@@ -171,14 +177,17 @@ async function downloadReservationNames(page, eventHash, dateId) {
 async function scrapeAccount(account) {
   return withBrowser(`kokuchpro-${account.label}`, async (page) => {
     await login(page, account);
+    console.error("[kokuchpro診断] ログイン成功");
 
     const eventAdminUrls = await listEventAdminUrls(page);
+    console.error(`[kokuchpro診断] イベント管理画面URL件数: ${eventAdminUrls.length}`);
     const reservations = [];
 
     for (const eventAdminUrl of eventAdminUrls) {
       const sessions = await listSessions(page, eventAdminUrl);
-      await page.goto(eventAdminUrl);
+      await page.goto(eventAdminUrl, { waitUntil: "domcontentloaded" });
       const eventTitle = await getEventTitle(page);
+      console.error(`[kokuchpro診断] イベント処理中: ${eventTitle} (開催回数: ${sessions.length})`);
 
       for (const session of sessions) {
         const names = await downloadReservationNames(page, session.eventHash, session.dateId);

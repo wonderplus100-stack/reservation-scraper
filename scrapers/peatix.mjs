@@ -60,7 +60,12 @@ async function login(page, account) {
     await logDiagnostics(page, "メール入力欄が見つからない");
     throw err;
   }
-  await page.getByRole("button", { name: /Next|次へ/i }).click();
+  try {
+    await page.getByRole("button", { name: /Next|次へ/i }).click({ timeout: 20000 });
+  } catch (err) {
+    await logDiagnostics(page, "Nextボタンが見つからない");
+    throw err;
+  }
 
   const passwordInput = page.locator('input[type="password"]');
   await passwordInput.waitFor({ state: "visible", timeout: 15000 });
