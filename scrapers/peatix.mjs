@@ -46,18 +46,21 @@ async function login(page, account) {
   // count()での即時チェックではなく、出現を待ってからクリックする
   // (出なければ元々メール欄がある旧UIとみなしてスキップする)。
   try {
-    await page.getByText("Sign in with email").first().click({ timeout: 15000 });
+    await page
+      .getByText(/sign in with email|メールで(サインイン|ログイン)/i)
+      .first()
+      .click({ timeout: 15000 });
   } catch {
     // 選択画面が出ない場合は何もしない(メール欄が直接表示されているはず)。
   }
 
   try {
-    await page.getByPlaceholder("メール").fill(account.email, { timeout: 20000 });
+    await page.getByPlaceholder(/メール|email/i).fill(account.email, { timeout: 20000 });
   } catch (err) {
     await logDiagnostics(page, "メール入力欄が見つからない");
     throw err;
   }
-  await page.getByRole("button", { name: "Next" }).click();
+  await page.getByRole("button", { name: /Next|次へ/i }).click();
 
   const passwordInput = page.locator('input[type="password"]');
   await passwordInput.waitFor({ state: "visible", timeout: 15000 });
