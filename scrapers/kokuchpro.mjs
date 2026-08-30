@@ -56,10 +56,18 @@ async function login(page, account) {
     await diagnoseNetwork(LOGIN_URL);
     throw err;
   }
-  await page.locator('input[type="text"]').first().fill(account.email);
-  const passwordInput = page.locator('input[type="password"]').first();
-  await passwordInput.fill(account.password);
-  await submitForm(page, passwordInput);
+  console.error(`[kokuchpro診断] page.goto成功: url=${page.url()}`);
+
+  try {
+    await page.locator('input[type="text"]').first().fill(account.email, { timeout: 30000 });
+    const passwordInput = page.locator('input[type="password"]').first();
+    await passwordInput.fill(account.password, { timeout: 30000 });
+    await submitForm(page, passwordInput);
+  } catch (err) {
+    const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 300)).catch(() => "");
+    console.error(`[kokuchpro診断] ログインフォーム操作失敗: url=${page.url()} bodyText=${JSON.stringify(bodyText)}`);
+    throw err;
+  }
 
   if (account.totpSecret) {
     // TODO(要確認): 2段階認証コード入力欄のセレクタ。

@@ -42,9 +42,13 @@ async function logDiagnostics(page, label) {
 async function login(page, account) {
   await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
 
-  const signInWithEmail = page.getByText("Sign in with email");
-  if (await signInWithEmail.count().catch(() => 0)) {
-    await signInWithEmail.first().click();
+  // domcontentloaded直後はReactの描画前で要素がまだ存在しないため、
+  // count()での即時チェックではなく、出現を待ってからクリックする
+  // (出なければ元々メール欄がある旧UIとみなしてスキップする)。
+  try {
+    await page.getByText("Sign in with email").first().click({ timeout: 15000 });
+  } catch {
+    // 選択画面が出ない場合は何もしない(メール欄が直接表示されているはず)。
   }
 
   try {
