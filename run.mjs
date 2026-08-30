@@ -18,10 +18,15 @@ import * as tunagate from "./scrapers/tunagate.mjs";
 const SCRAPERS = { googleForms, kokuchpro, peatix, tunagate };
 
 // 1媒体あたりの上限時間。こくちーずPRO等がCI環境でハングし、
-// GitHub Actionsのジョブ上限(15分)を使い切って強制キャンセルされる事故が
+// GitHub Actionsのジョブ上限を使い切って強制キャンセルされる事故が
 // 繰り返し発生したため、1媒体が固まっても他の媒体・シート更新へ確実に
-// 進めるように上限を設ける。
+// 進めるように上限を設ける。こくちーずPROは実データで40イベント×複数開催回を
+// 1件ずつCSVダウンロードするため他の媒体より本質的に時間がかかる
+// (実測で40イベントに約5分)ことが確認できたため、個別に長めの上限を設ける。
 const SCRAPER_TIMEOUT_MS = 3 * 60 * 1000;
+const SCRAPER_TIMEOUT_OVERRIDES_MS = {
+  kokuchpro: 10 * 60 * 1000
+};
 
 function withTimeout(promise, ms, label) {
   let timer;
@@ -47,7 +52,8 @@ async function collectAll(targets) {
     }
     console.log(`--- collecting: ${name} ---`);
     try {
-      const collected = await withTimeout(scraper.collect(), SCRAPER_TIMEOUT_MS, name);
+      const timeoutMs = SCRAPER_TIMEOUT_OVERRIDES_MS[name] || SCRAPER_TIMEOUT_MS;
+      const collected = await withTimeout(scraper.collect(), timeoutMs, name);
       console.log(`${name}: ${collected.length}件`);
       rows.push(...collected);
     } catch (err) {

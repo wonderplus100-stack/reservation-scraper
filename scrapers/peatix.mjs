@@ -86,12 +86,14 @@ async function login(page, account) {
 // ログイン後のダッシュボードURL(https://peatix.com/user/{userId}/dashboard)を
 // ページ内リンクから動的に取得する(アカウントごとにuserIdが異なるため)。
 async function getDashboardUrl(page) {
-  await page.goto("https://peatix.com/user/me/dashboard").catch(() => {});
+  await page.goto("https://peatix.com/user/me/dashboard", { waitUntil: "domcontentloaded" }).catch(() => {});
+  await page.waitForLoadState("networkidle").catch(() => {});
   const href = await page
     .locator('a[href*="/user/"][href*="/dashboard"]')
     .first()
     .getAttribute("href")
     .catch(() => null);
+  console.error(`[peatix診断] getDashboardUrl: href=${href} page.url=${page.url()}`);
   return href || page.url();
 }
 
@@ -102,10 +104,10 @@ async function getDashboardUrl(page) {
 // 無限スクロール/ページネーションで一部しか読み込まれていない可能性があるため、
 // 必要に応じてスクロールして追加読み込みさせる処理を足すこと(TODO)。
 async function listEvents(page, dashboardUrl) {
-  await page.goto(dashboardUrl);
+  await page.goto(dashboardUrl, { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle").catch(() => {});
 
-  return page.evaluate(() => {
+  const events = await page.evaluate(() => {
     const results = [];
     for (const link of document.querySelectorAll('a[href*="/list_sales"]')) {
       const idMatch = link.href.match(/\/event\/(\d+)\/list_sales/);
@@ -129,6 +131,11 @@ async function listEvents(page, dashboardUrl) {
     const byId = new Map(results.map((r) => [r.eventId, r]));
     return Array.from(byId.values());
   });
+  console.error(`[peatix診断] dashboardUrl=${dashboardUrl} 実際のURL=${page.url()} イベント件数=${events.length}`);
+  if (events.length === 0) {
+    await logDiagnostics(page, "ダッシュボードでイベントが0件");
+  }
+  return events;
 }
 
 // 参加者一覧ページで氏名を取得する。まずCSVダウンロードを試み、
