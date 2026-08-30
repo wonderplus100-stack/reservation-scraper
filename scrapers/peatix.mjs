@@ -21,10 +21,28 @@ function accountsFromEnv() {
   return accounts;
 }
 
+// 実行環境(CI等)でログインフォームが想定通り表示されない場合に、
+// 何が起きているか次回ログで分かるようにする診断ヘルパー。
+async function logDiagnostics(page, label) {
+  try {
+    const url = page.url();
+    const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 300));
+    console.error(`[peatix診断:${label}] url=${url}`);
+    console.error(`[peatix診断:${label}] bodyText=${JSON.stringify(bodyText)}`);
+  } catch (e) {
+    console.error(`[peatix診断:${label}] 診断情報の取得にも失敗: ${e.message}`);
+  }
+}
+
 // Peatixのログインは「メール入力→Next→パスワード入力」の2段階(SPA)。実アカウントで確認済み。
 async function login(page, account) {
   await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
-  await page.getByPlaceholder("メール").fill(account.email);
+  try {
+    await page.getByPlaceholder("メール").fill(account.email, { timeout: 20000 });
+  } catch (err) {
+    await logDiagnostics(page, "メール入力欄が見つからない");
+    throw err;
+  }
   await page.getByRole("button", { name: "Next" }).click();
 
   const passwordInput = page.locator('input[type="password"]');
