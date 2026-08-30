@@ -47,7 +47,7 @@ async function login(page, account) {
   // (出なければ元々メール欄がある旧UIとみなしてスキップする)。
   try {
     await page
-      .getByText(/sign in with email|メールで(サインイン|ログイン)/i)
+      .getByText(/sign in with email|メール.*(サインイン|ログイン)/i)
       .first()
       .click({ timeout: 15000 });
   } catch {
@@ -61,7 +61,7 @@ async function login(page, account) {
     throw err;
   }
   try {
-    await page.getByRole("button", { name: /Next|次へ/i }).click({ timeout: 20000 });
+    await page.getByRole("button", { name: /Next|次(へ|に進む)/i }).click({ timeout: 20000 });
   } catch (err) {
     await logDiagnostics(page, "Nextボタンが見つからない");
     throw err;
