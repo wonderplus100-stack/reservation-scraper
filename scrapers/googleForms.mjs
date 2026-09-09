@@ -1,3 +1,4 @@
+import { hiraganaToKatakana } from "../lib/normalizeName.mjs";
 import { fullSheetRange, readSheetValues } from "../lib/sheetsClient.mjs";
 
 // Googleフォームはそれ自体にログインが不要 — フォームの回答が書き込まれる
@@ -26,23 +27,37 @@ function accountsFromEnv() {
       spreadsheetId,
       sheetName: process.env[`FORM_${index}_SHEET_NAME`] || "フォームの回答 1",
       namePattern: process.env[`FORM_${index}_NAME_COLUMN_PATTERN`] || "お名前",
-      eventPattern: process.env[`FORM_${index}_EVENT_COLUMN_PATTERN`] || "参加希望日"
+      eventPattern: process.env[`FORM_${index}_EVENT_COLUMN_PATTERN`] || "参加希望日",
+      // 担当者/紹介者列は、フォームによって列見出しの文言も有無も異なるため
+      // アカウントごとに環境変数で指定できるようにする(未設定なら集計しない)。
+      referrerPattern: process.env[`FORM_${index}_REFERRER_COLUMN_PATTERN`] || ""
     });
   }
   return accounts;
 }
 
-function extractReservations(values, { namePattern, eventPattern }) {
+function extractReservations(values, { namePattern, eventPattern, referrerPattern }) {
   const [headerRow, ...dataRows] = values;
   if (!headerRow) return [];
 
   // 「お名前」は「お名前(フリガナ)」のようなふりがな列も部分一致してしまうため、
   // フリガナ/カナを示す見出しは除外する(実データで確認して発覚した問題)。
+  // ただしふりがな列自体はカタカナ書き出し用に別途値を取得しておく。
   const FURIGANA_MARKERS = ["フリガナ", "ふりがな", "カナ", "ｶﾅ"];
   const nameColumnIndexes = headerRow
     .map((header, index) => ({ header: String(header || ""), index }))
     .filter(({ header }) => header.includes(namePattern) && !FURIGANA_MARKERS.some((marker) => header.includes(marker)))
     .map(({ index }) => index);
+  const readingColumnIndexes = headerRow
+    .map((header, index) => ({ header: String(header || ""), index }))
+    .filter(({ header }) => header.includes(namePattern) && FURIGANA_MARKERS.some((marker) => header.includes(marker)))
+    .map(({ index }) => index);
+  const referrerColumnIndexes = referrerPattern
+    ? headerRow
+        .map((header, index) => ({ header: String(header || ""), index }))
+        .filter(({ header }) => header.includes(referrerPattern))
+        .map(({ index }) => index)
+    : [];
   const eventColumns = headerRow
     .map((header, index) => ({ header: String(header || "").trim(), index }))
     .filter(({ header }) => header.includes(eventPattern));
@@ -54,11 +69,23 @@ function extractReservations(values, { namePattern, eventPattern }) {
       .find(Boolean);
     if (!reservationName) continue;
 
+    const readingKana = readingColumnIndexes
+      .map((i) => String(row[i] || "").trim())
+      .find(Boolean) || "";
+    const referrerName = referrerColumnIndexes
+      .map((i) => String(row[i] || "").trim())
+      .find(Boolean) || "";
+
     for (const { header, index } of eventColumns) {
       const value = String(row[index] || "").trim();
       if (!value) continue;
       // 列見出し(地域名を含む)と回答値を組み合わせて、地域ごとに別イベントとして扱う。
-      results.push({ reservationName, rawEventName: `${header}：${value}` });
+      results.push({
+        reservationName,
+        rawEventName: `${header}：${value}`,
+        readingKatakana: hiraganaToKatakana(readingKana),
+        referrerName
+      });
     }
   }
   return results;
@@ -78,6 +105,8 @@ export async function collect() {
         account: account.label,
         rawEventName: reservation.rawEventName,
         reservationName: reservation.reservationName,
+        readingKatakana: reservation.readingKatakana,
+        referrerName: reservation.referrerName,
         obtainedAt
       });
     }
