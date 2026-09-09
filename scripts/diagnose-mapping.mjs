@@ -18,16 +18,31 @@ async function main() {
   console.log(`EventMaster行数: ${eventMaster.length}`);
   console.log(`Unmapped行数: ${unmapped.length}`);
 
-  console.log("\n--- EventMaster 先頭5件(生値) ---");
+  // GitHub Actionsのシークレットマスキングにより生値がまるごと***化される
+  // 現象が発生したため、実際の値をログに出さずに安全に調べられる情報
+  // (長さ・先頭文字種・JSON/秘密鍵らしき文字列を含むか)だけを出力する。
+  function safeSummary(label, value) {
+    const str = String(value ?? "");
+    return {
+      label,
+      length: str.length,
+      isEmpty: str.length === 0,
+      looksLikeJson: str.trim().startsWith("{"),
+      looksLikePrivateKey: str.includes("BEGIN PRIVATE KEY") || str.includes("-----BEGIN"),
+      first3CharCodes: [...str.slice(0, 3)].map((c) => c.codePointAt(0))
+    };
+  }
+
+  console.log("\n--- EventMaster 先頭5件(安全な要約のみ) ---");
   for (const row of eventMaster.slice(0, 5)) {
     console.log(JSON.stringify({
-      canonicalEventId: row.canonicalEventId,
-      platform: row.platform,
-      account: row.account,
-      rawEventName: row.rawEventName,
-      normalized: normalizeEventName(row.rawEventName)
+      canonicalEventId: safeSummary("canonicalEventId", row.canonicalEventId),
+      platform: safeSummary("platform", row.platform),
+      account: safeSummary("account", row.account),
+      rawEventName: safeSummary("rawEventName", row.rawEventName)
     }));
   }
+  console.log(`EventMasterの列見出し(先頭行): ${JSON.stringify(Object.keys(eventMaster[0] || {}))}`);
 
   console.log("\n--- Unmapped 先頭5件(生値) ---");
   for (const row of unmapped.slice(0, 5)) {
