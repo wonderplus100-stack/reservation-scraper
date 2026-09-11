@@ -146,11 +146,19 @@ async function listEvents(page, dashboardUrl) {
 // これは決済時に個別の参加者名を収集していないイベントである可能性が高く、
 // 氏名ベースの正確なユニーク集計ができない場合がある点に注意。
 async function scrapeEventAttendees(page, eventId) {
-  await page.goto(`https://peatix.com/event/${eventId}/list_attendees`);
+  // 実アカウントのスクリーンショットで確認したところ、管理画面の
+  // 「注文/参加者一覧」リンクは /list_attendees ではなく /list_sales を
+  // 指していた(list_attendeesは存在しない/別物のURLだった可能性が高く、
+  // これが集客0件の原因と考えられる)。
+  await page.goto(`https://peatix.com/event/${eventId}/list_sales`, { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle").catch(() => {});
 
   const csvLink = page.getByText("参加者リスト(CSV)", { exact: false });
-  if ((await csvLink.count()) > 0) {
+  const csvLinkCount = await csvLink.count();
+  if (csvLinkCount === 0) {
+    await logDiagnostics(page, `list_salesにCSVリンクが見つからない(eventId=${eventId})`);
+  }
+  if (csvLinkCount > 0) {
     try {
       const [download] = await Promise.all([
         page.waitForEvent("download", { timeout: 5000 }),
