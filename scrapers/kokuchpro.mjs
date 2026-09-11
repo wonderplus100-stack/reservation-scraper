@@ -5,9 +5,13 @@ import { decodeShiftJis, findColumn, tableFromCsv } from "../lib/csv.mjs";
 
 const LOGIN_URL = "https://www.kokuchpro.com/auth/login/";
 // 「募集中イベント」「終了イベント」の両方を対象にする(終了済みの回にも参加者は残る)。
+// 実アカウントで確認したところ、フィルタ無しだと募集中45件+終了236件=
+// 281件を毎回全走査しており(1件ずつ管理画面を開くため)、これが
+// タイムアウトの主因だった。entry=1(申込ありのイベント)で絞り込むと
+// 45件+82件=127件のうち実際に処理が必要なのは82+1=83件まで減らせる。
 const EVENT_LIST_URLS = [
-  "https://www.kokuchpro.com/mypage/event/",
-  "https://www.kokuchpro.com/mypage/event/close/"
+  "https://www.kokuchpro.com/mypage/event/?entry=1&filter_sort=1",
+  "https://www.kokuchpro.com/mypage/event/close/?entry=1&filter_sort=1"
 ];
 const EVENT_ADMIN_URL_RE = /\/admin\/e-([0-9a-f]+)\/d-(\d+)\//;
 
@@ -89,17 +93,26 @@ async function login(page, account) {
   }
 }
 
+// 1ページ20件で複数ページに分かれるため(実アカウントで最大5ページ確認済み)、
+// 新しい行が取れなくなるまで(または安全のため上限20ページまで)辿る。
+const MAX_LIST_PAGES = 20;
+
 // イベント一覧ページから、各イベントの管理画面URL(最初の開催日)を集める。
 async function listEventAdminUrls(page) {
   const urls = new Set();
   for (const listUrl of EVENT_LIST_URLS) {
-    // ログインページ同様、広告読み込みで"load"イベントが遅延するため
-    // domcontentloadedで次に進む(これが未対応だったため、2つのURLの
-    // goto()がそれぞれ最大60秒粘り、外側の180秒タイムアウトを
-    // 診断ログなしで消費してしまっていたと考えられる)。
-    await page.goto(listUrl, { waitUntil: "domcontentloaded" });
-    const hrefs = await page.locator('a[href*="/admin/e-"]').evaluateAll((els) => els.map((el) => el.href));
-    for (const href of hrefs) urls.add(href.split("?")[0]);
+    for (let pageNum = 1; pageNum <= MAX_LIST_PAGES; pageNum += 1) {
+      const url = pageNum === 1 ? listUrl : `${listUrl}&page=${pageNum}`;
+      // ログインページ同様、広告読み込みで"load"イベントが遅延するため
+      // domcontentloadedで次に進む(これが未対応だったため、goto()が
+      // それぞれ最大60秒粘り、外側のタイムアウトを診断ログなしで
+      // 消費してしまっていたと考えられる)。
+      await page.goto(url, { waitUntil: "domcontentloaded" });
+      const hrefs = await page.locator('a[href*="/admin/e-"]').evaluateAll((els) => els.map((el) => el.href));
+      const before = urls.size;
+      for (const href of hrefs) urls.add(href.split("?")[0]);
+      if (urls.size === before) break; // これ以上新しいイベントが無ければ次ページは無い
+    }
   }
   return Array.from(urls);
 }
