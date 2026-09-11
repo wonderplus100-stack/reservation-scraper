@@ -1,9 +1,12 @@
 import "dotenv/config";
-import { normalizeName } from "./lib/normalizeName.mjs";
+import { normalizeEventName, normalizeName } from "./lib/normalizeName.mjs";
+import { matchOfficialEvent } from "./lib/officialEventMatcher.mjs";
 import {
   RAW_DATA_SHEET,
   UNMAPPED_SHEET,
+  appendEventMasterRows,
   readEventMaster,
+  readOfficialEvents,
   readSheetAsObjects,
   replaceRawRows,
   replaceUnmappedRows,
@@ -96,13 +99,45 @@ async function main() {
   const rawRows = await collectAll(targets);
 
   const eventMaster = await readEventMaster(sheetId);
+  const officialEvents = await readOfficialEvents(sheetId);
   const eventMasterById = new Map(eventMaster.map((row) => [row.canonicalEventId, row]));
+
+  // EventMasterで解決できなかった行は、Wonder+公式HPのスケジュール表
+  // (OfficialEvents)から日付+会場で突き合わせを試みる。一致すれば、
+  // 次回以降は通常のEventMaster解決で済むよう、その場でEventMasterにも
+  // 追記しておく(公式の正しい名称で登録されるため、従来の
+  // generate-event-master.mjsによる「生テキストそのまま」の登録より良質)。
+  const coveredKeys = new Set(
+    eventMaster.map((row) => `${row.platform}|||${row.account}|||${normalizeEventName(row.rawEventName)}`)
+  );
+  const newEventMasterRows = [];
 
   const resolved = [];
   const unmapped = [];
 
   for (const row of rawRows) {
-    const canonicalEventId = resolveCanonicalEventId(eventMaster, row.platform, row.account, row.rawEventName);
+    let canonicalEventId = resolveCanonicalEventId(eventMaster, row.platform, row.account, row.rawEventName);
+    let canonicalEventName = canonicalEventId ? eventMasterById.get(canonicalEventId)?.canonicalEventName : null;
+
+    if (!canonicalEventId) {
+      const officialMatch = matchOfficialEvent(row.rawEventName, officialEvents);
+      if (officialMatch) {
+        canonicalEventId = officialMatch.canonicalEventId;
+        canonicalEventName = officialMatch.canonicalEventName;
+        const key = `${row.platform}|||${row.account}|||${normalizeEventName(row.rawEventName)}`;
+        if (!coveredKeys.has(key)) {
+          coveredKeys.add(key);
+          newEventMasterRows.push({
+            canonicalEventId,
+            canonicalEventName,
+            platform: row.platform,
+            account: row.account,
+            rawEventName: row.rawEventName
+          });
+        }
+      }
+    }
+
     if (!canonicalEventId) {
       unmapped.push(row);
       continue;
@@ -110,9 +145,14 @@ async function main() {
     resolved.push({
       ...row,
       canonicalEventId,
-      canonicalEventName: eventMasterById.get(canonicalEventId)?.canonicalEventName || row.rawEventName,
+      canonicalEventName: canonicalEventName || row.rawEventName,
       normalizedName: normalizeName(row.reservationName)
     });
+  }
+
+  if (newEventMasterRows.length > 0) {
+    await appendEventMasterRows(sheetId, newEventMasterRows);
+    console.log(`公式スケジュールとの突き合わせでEventMasterに${newEventMasterRows.length}件追加しました。`);
   }
 
   console.log(`resolved: ${resolved.length}, unmapped(要イベントマスタ登録): ${unmapped.length}`);

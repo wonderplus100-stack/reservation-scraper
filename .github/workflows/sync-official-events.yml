@@ -1,0 +1,25 @@
+name: sync-official-events
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm install
+
+      - name: Sync OfficialEvents from Wonder+ official schedule sheet
+        env:
+          SHEET_ID: ${{ vars.SHEET_ID }}
+          SCHEDULE_SPREADSHEET_ID: ${{ vars.SCHEDULE_SPREADSHEET_ID }}
+          SCHEDULE_SHEET_NAME: ${{ vars.SCHEDULE_SHEET_NAME }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: node scripts/sync-official-events.mjs
