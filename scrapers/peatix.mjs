@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { submitForm, withBrowser } from "../lib/browser.mjs";
 import { generateTotpCode } from "../lib/totp.mjs";
-import { decodeShiftJis, findColumn, tableFromCsv } from "../lib/csv.mjs";
+import { decodeUtf16Le, findColumn, tableFromCsv } from "../lib/csv.mjs";
 
 const LOGIN_URL = "https://peatix.com/signin";
 
@@ -167,13 +167,23 @@ async function scrapeEventAttendees(page, eventId) {
       const path = await download.path();
       if (path) {
         const fileBuffer = await readFile(path);
-        // TODO(要確認): PeatixのCSVエンコード(Shift JIS想定だが未検証)。
-        const text = decodeShiftJis(fileBuffer);
-        const rows = tableFromCsv(text);
+        // 実アカウントで確認済み: Content-Type: text/csv; charset=UTF-16LE、
+        // タブ区切り。以前はShift JIS・カンマ区切りと誤って想定しており、
+        // これが名前抽出が常に0件になっていた実際の原因だった。
+        // 列は「名前」(カタカナ読み)と「表示名」(本人が入力した表示名、
+        // 漢字/ニックネーム/英字など)に分かれている。
+        const text = decodeUtf16Le(fileBuffer);
+        const rows = tableFromCsv(text, "\t");
         const headers = rows[0] ? Object.keys(rows[0]) : [];
-        const nameColumn = findColumn(headers, ["氏名", "お名前", "名前", "Name"]);
-        if (nameColumn) {
-          return rows.map((row) => String(row[nameColumn] || "").trim()).filter(Boolean);
+        const displayNameColumn = findColumn(headers, ["表示名"]) || findColumn(headers, ["氏名", "お名前", "名前", "Name"]);
+        const katakanaColumn = findColumn(headers, ["名前"]);
+        if (displayNameColumn) {
+          return rows
+            .map((row) => ({
+              name: String(row[displayNameColumn] || "").trim(),
+              readingKatakana: katakanaColumn ? String(row[katakanaColumn] || "").trim() : ""
+            }))
+            .filter((r) => r.name);
         }
       }
     } catch {
@@ -183,7 +193,7 @@ async function scrapeEventAttendees(page, eventId) {
 
   // フォールバック: 画面上に表示されている購入者名を拾う。
   // TODO(要確認): 個々の参加者行の正確なセレクタ。ここでは大まかな推定。
-  return page.evaluate(() => {
+  const fallbackNames = await page.evaluate(() => {
     const names = [];
     for (const el of document.querySelectorAll("li, tr")) {
       const text = (el.textContent || "").trim();
@@ -192,6 +202,7 @@ async function scrapeEventAttendees(page, eventId) {
     }
     return names;
   });
+  return fallbackNames.map((name) => ({ name, readingKatakana: "" }));
 }
 
 async function scrapeAccount(account) {
@@ -203,9 +214,13 @@ async function scrapeAccount(account) {
     const reservations = [];
     for (const event of events) {
       if (!event.applied) continue; // 申込み0件のイベントはスキップ
-      const names = await scrapeEventAttendees(page, event.eventId);
-      for (const reservationName of names) {
-        reservations.push({ rawEventName: event.title || event.eventId, reservationName });
+      const attendees = await scrapeEventAttendees(page, event.eventId);
+      for (const attendee of attendees) {
+        reservations.push({
+          rawEventName: event.title || event.eventId,
+          reservationName: attendee.name,
+          readingKatakana: attendee.readingKatakana
+        });
       }
     }
     return reservations;
@@ -225,6 +240,7 @@ export async function collect() {
         account: account.label,
         rawEventName: reservation.rawEventName,
         reservationName: reservation.reservationName,
+        readingKatakana: reservation.readingKatakana || "",
         obtainedAt
       });
     }
