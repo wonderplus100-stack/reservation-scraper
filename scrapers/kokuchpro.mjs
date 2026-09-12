@@ -64,6 +64,17 @@ async function login(page, account) {
   }
   console.error(`[kokuchpro診断] page.goto成功: url=${page.url()}`);
 
+  // storage-stateキャッシュ経由で既にログイン済みだと、/auth/login/への
+  // アクセスは(ログインフォームを出さずに)/mypage/index/等へ即座に
+  // リダイレクトされる。この状態で存在しないログインフォームを
+  // fill()しようとして毎回タイムアウトしていたことが実測で判明したため、
+  // ログインページ以外に遷移していれば既にログイン済みとみなして
+  // フォーム操作をスキップする。
+  if (!page.url().includes("/auth/login/")) {
+    console.error(`[kokuchpro診断] 既にログイン済みのため、フォーム操作をスキップ: url=${page.url()}`);
+    return;
+  }
+
   // fill()自体のtimeoutオプションだけに頼ると、ページが繰り返しリダイレクト/
   // 再読み込みするようなケースで想定より長く粘ってしまう可能性があるため、
   // Playwright側の時計とは独立したsetTimeoutで確実に45秒で打ち切り診断を出す。
