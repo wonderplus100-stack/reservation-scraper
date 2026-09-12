@@ -203,9 +203,9 @@ async function downloadReservationNames(page, eventHash, dateId) {
   if (rows.length === 0) return [];
 
   const headers = Object.keys(rows[0]);
-  // TODO(要確認): 実際のCSVヘッダー名。ヘルプセンターの説明からは列名が明記されていないため、
-  // 「氏名」「お名前」「名前」のいずれかを含む列を氏名として扱う実装にしている。
-  const nameColumn = findColumn(headers, ["氏名", "お名前", "名前"]);
+  // 実アカウントのCSVで確認済み: 実際の列名は「申込者名」
+  // (申込番号, 申込状態, 申込者名, メールアドレス, ...)。
+  const nameColumn = findColumn(headers, ["申込者名", "氏名", "お名前", "名前"]);
   if (!nameColumn) {
     console.warn(`こくちーずPRO: 氏名列が見つかりません(見つかった列: ${headers.join(", ")})`);
     return [];
