@@ -198,11 +198,11 @@ async function scrapeAccount(account) {
     console.error(`[kokuchpro診断] イベント管理画面URL件数: ${eventAdminUrls.length}`);
     const reservations = [];
 
-    for (const eventAdminUrl of eventAdminUrls) {
+    for (const [index, eventAdminUrl] of eventAdminUrls.entries()) {
       const sessions = await listSessions(page, eventAdminUrl);
       await page.goto(eventAdminUrl, { waitUntil: "domcontentloaded" });
       const eventTitle = await getEventTitle(page);
-      console.error(`[kokuchpro診断] イベント処理中: ${eventTitle} (開催回数: ${sessions.length})`);
+      console.error(`[kokuchpro診断] イベント処理中(${index + 1}/${eventAdminUrls.length}): ${eventTitle} (開催回数: ${sessions.length})`);
 
       for (const session of sessions) {
         const names = await downloadReservationNames(page, session.eventHash, session.dateId);

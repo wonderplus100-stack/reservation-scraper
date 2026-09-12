@@ -28,7 +28,10 @@ const SCRAPERS = { googleForms, kokuchpro, peatix, tunagate };
 // (実測で40イベントに約5分)ことが確認できたため、個別に長めの上限を設ける。
 const SCRAPER_TIMEOUT_MS = 3 * 60 * 1000;
 const SCRAPER_TIMEOUT_OVERRIDES_MS = {
-  kokuchpro: 10 * 60 * 1000
+  // 「申込ありのイベント」に絞り込んでもなお83件あり(実測で10分でも
+  // 完走しない)、イベントごとの開催回数(セッション数)にもばらつきが
+  // 大きいため、余裕を持って15分の上限にする。
+  kokuchpro: 15 * 60 * 1000
 };
 
 function withTimeout(promise, ms, label) {
