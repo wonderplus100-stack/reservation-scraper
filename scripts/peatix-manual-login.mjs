@@ -44,13 +44,29 @@ async function main() {
   console.log("このターミナルに戻って Enter キーを押してください。");
   console.log("");
 
-  await new Promise((resolve) => {
-    process.stdin.resume();
-    process.stdin.once("data", resolve);
-  });
+  // Enterを押すタイミングが早すぎて、実際にはログインが完了していない
+  // 状態のまま保存してしまう事故が実際に起きたため、保存前に
+  // 「/user/{数字}/dashboard」へ実際に到達できるか(=本当にログイン
+  // 済みか)を機械的に確認し、ダメなら保存せずに再度待つ。
+  for (;;) {
+    await new Promise((resolve) => {
+      process.stdin.resume();
+      process.stdin.once("data", resolve);
+    });
+
+    await page.goto("https://peatix.com/user/me/dashboard", { waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.waitForLoadState("networkidle").catch(() => {});
+    const isLoggedIn = /\/user\/\d+\/dashboard/.test(page.url());
+    if (isLoggedIn) break;
+
+    console.log("");
+    console.log(`ログイン済みの状態が確認できませんでした(現在のURL: ${page.url()})。`);
+    console.log("マイイベント画面が表示されている状態で、もう一度Enterキーを押してください。");
+    console.log("");
+  }
 
   await context.storageState({ path: statePath });
-  console.log(`保存しました: ${statePath}`);
+  console.log(`ログイン済みであることを確認し、保存しました: ${statePath}`);
   console.log("このファイルの中身をコピーして、GitHub Secretsに登録してください。");
 
   await browser.close();
