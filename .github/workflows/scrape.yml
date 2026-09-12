@@ -32,6 +32,14 @@ jobs:
           restore-keys: |
             storage-state-
 
+      - name: Seed Peatix sessions from manually-captured storage-state (if provided)
+        env:
+          PEATIX_1_ACCOUNT_LABEL: ${{ vars.PEATIX_1_ACCOUNT_LABEL }}
+          PEATIX_1_STORAGE_STATE: ${{ secrets.PEATIX_1_STORAGE_STATE }}
+          PEATIX_2_ACCOUNT_LABEL: ${{ vars.PEATIX_2_ACCOUNT_LABEL }}
+          PEATIX_2_STORAGE_STATE: ${{ secrets.PEATIX_2_STORAGE_STATE }}
+        run: node scripts/seed-peatix-sessions.mjs
+
       - name: Sync OfficialEvents from Wonder+ official schedule sheet
         env:
           SHEET_ID: ${{ vars.SHEET_ID }}
@@ -69,10 +77,6 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           KOKUCHPRO_1_PASSWORD: ${{ secrets.KOKUCHPRO_1_PASSWORD }}
           KOKUCHPRO_1_TOTP_SECRET: ${{ secrets.KOKUCHPRO_1_TOTP_SECRET }}
-          PEATIX_1_PASSWORD: ${{ secrets.PEATIX_1_PASSWORD }}
-          PEATIX_1_TOTP_SECRET: ${{ secrets.PEATIX_1_TOTP_SECRET }}
-          PEATIX_2_PASSWORD: ${{ secrets.PEATIX_2_PASSWORD }}
-          PEATIX_2_TOTP_SECRET: ${{ secrets.PEATIX_2_TOTP_SECRET }}
           TUNAGATE_1_PASSWORD: ${{ secrets.TUNAGATE_1_PASSWORD }}
           TUNAGATE_1_TOTP_SECRET: ${{ secrets.TUNAGATE_1_TOTP_SECRET }}
         run: node run.mjs
