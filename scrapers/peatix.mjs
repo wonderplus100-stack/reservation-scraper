@@ -213,10 +213,23 @@ async function scrapeEventAttendees(page, eventId) {
   return fallbackNames.map((name) => ({ name, readingKatakana: "" }));
 }
 
+// "/user/{数字}/dashboard"の形なら本物のログイン後ダッシュボード、
+// それ以外(未ログイン時に飛ばされる公開ページ等)は未ログインとみなす。
+function isAuthenticatedDashboardUrl(url) {
+  return /\/user\/\d+\/dashboard/.test(String(url || ""));
+}
+
 async function scrapeAccount(account) {
-  return withBrowser(`peatix-${account.label}`, async (page) => {
-    await login(page, account);
-    const dashboardUrl = await getDashboardUrl(page);
+  return withBrowser(`peatix-${account.label}`, async (page, { hasSavedState }) => {
+    // Peatixはメール確認(ワンタイムコード)を都度要求する仕様のため、
+    // 毎回ログインし直すと自動化では突破できない。保存済みセッションが
+    // まだ有効ならログイン処理自体をスキップし、無効だった場合のみ
+    // (メール確認が必要になり失敗するとしても)通常のログインを試みる。
+    let dashboardUrl = hasSavedState ? await getDashboardUrl(page) : null;
+    if (!isAuthenticatedDashboardUrl(dashboardUrl)) {
+      await login(page, account);
+      dashboardUrl = await getDashboardUrl(page);
+    }
     const events = await listEvents(page, dashboardUrl);
 
     const reservations = [];
