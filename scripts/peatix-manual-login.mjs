@@ -54,7 +54,13 @@ async function main() {
       process.stdin.once("data", resolve);
     });
 
-    await page.goto("https://peatix.com/user/me/dashboard", { waitUntil: "domcontentloaded" }).catch(() => {});
+    // 実際に試したところ /user/me/dashboard は直接開くと「ページが
+    // 見つかりません」表示になり、ログイン済みでも /user/{数字}/dashboard
+    // へリダイレクトされないことが分かった(ログイン後のリダイレクト先
+    // としてのみ機能する模様)。/signinの方は、ログイン済みなら確実に
+    // /user/{数字}/dashboardへリダイレクトされる(実アカウントで確認済み)
+    // ため、判定にはこちらを使う。
+    await page.goto("https://peatix.com/signin", { waitUntil: "domcontentloaded" }).catch(() => {});
     await page.waitForLoadState("networkidle").catch(() => {});
     const isLoggedIn = /\/user\/\d+\/dashboard/.test(page.url());
     if (isLoggedIn) break;

@@ -32,9 +32,14 @@ async function logDiagnostics(page, label) {
 }
 
 // ログイン後のダッシュボードURL(https://peatix.com/user/{userId}/dashboard)を
-// ページ内リンクから動的に取得する(アカウントごとにuserIdが異なるため)。
+// 取得する(アカウントごとにuserIdが異なるため)。
+// 実際に試したところ /user/me/dashboard は直接開くと「ページが
+// 見つかりません」表示になり、ログイン済みでも/user/{数字}/dashboardへ
+// リダイレクトされないことが分かった(ログイン後のリダイレクト先としてのみ
+// 機能する模様)。/signinはログイン済みなら確実に/user/{数字}/dashboardへ
+// リダイレクトされる(実アカウントで確認済み)ため、こちらを使う。
 async function getDashboardUrl(page) {
-  await page.goto("https://peatix.com/user/me/dashboard", { waitUntil: "domcontentloaded" }).catch(() => {});
+  await page.goto("https://peatix.com/signin", { waitUntil: "domcontentloaded" }).catch(() => {});
   await page.waitForLoadState("networkidle").catch(() => {});
   const href = await page
     .locator('a[href*="/user/"][href*="/dashboard"]')
