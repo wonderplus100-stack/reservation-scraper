@@ -46,7 +46,9 @@ async function diagnoseNetwork(url) {
     const text = (await res.text()).slice(0, 300);
     console.error(`[kokuchpro診断] fetch成功 status=${res.status} body=${JSON.stringify(text)}`);
   } catch (e) {
-    console.error(`[kokuchpro診断] fetchも失敗: ${e.message}`);
+    // Node(undici)の"fetch failed"は上位ラッパーのメッセージで、実際の
+    // 原因(DNS解決失敗/接続拒否/TLSエラー等)はe.causeに入っている。
+    console.error(`[kokuchpro診断] fetchも失敗: ${e.message} cause=${e.cause?.code || e.cause?.message || e.cause}`);
   }
 }
 
