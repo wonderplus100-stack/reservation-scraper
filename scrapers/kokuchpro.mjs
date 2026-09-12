@@ -100,8 +100,17 @@ async function login(page, account) {
 const MAX_LIST_PAGES = 20;
 
 // イベント一覧ページから、各イベントの管理画面URL(最初の開催日)を集める。
+// 重要: 定期開催イベントは同じe-ハッシュ(イベント本体)が開催日の数だけ
+// 一覧に別行(別d-id)で表示される。1つのd-idにアクセスするだけで
+// そのイベントの全開催日(dropdown)が分かるため、e-ハッシュ単位で
+// 重複除去しないと、同じイベントの全開催回を行の数だけ重複して
+// 処理してしまう(実測で1イベント最大48開催回、これが数時間規模の
+// 処理時間になっていた主因)。ページネーション終了判定は生URL単位
+// (重複除去前)で行う、でないと1ページが同一イベントの複数行だけで
+// 埋まった場合に「新しいイベントなし」と誤判定して途中で打ち切って
+// しまう。
 async function listEventAdminUrls(page) {
-  const urls = new Set();
+  const rawUrls = new Set();
   for (const listUrl of EVENT_LIST_URLS) {
     for (let pageNum = 1; pageNum <= MAX_LIST_PAGES; pageNum += 1) {
       const url = pageNum === 1 ? listUrl : `${listUrl}&page=${pageNum}`;
@@ -111,12 +120,20 @@ async function listEventAdminUrls(page) {
       // 消費してしまっていたと考えられる)。
       await page.goto(url, { waitUntil: "domcontentloaded" });
       const hrefs = await page.locator('a[href*="/admin/e-"]').evaluateAll((els) => els.map((el) => el.href));
-      const before = urls.size;
-      for (const href of hrefs) urls.add(href.split("?")[0]);
-      if (urls.size === before) break; // これ以上新しいイベントが無ければ次ページは無い
+      const before = rawUrls.size;
+      for (const href of hrefs) rawUrls.add(href.split("?")[0]);
+      if (rawUrls.size === before) break; // これ以上新しい行が無ければ次ページは無い
     }
   }
-  return Array.from(urls);
+
+  const byHash = new Map();
+  for (const url of rawUrls) {
+    const match = url.match(EVENT_ADMIN_URL_RE);
+    if (!match) continue;
+    const [, eventHash] = match;
+    if (!byHash.has(eventHash)) byHash.set(eventHash, url);
+  }
+  return Array.from(byHash.values());
 }
 
 // イベント管理画面の開催日セレクトボックスを1つずつ選び、
