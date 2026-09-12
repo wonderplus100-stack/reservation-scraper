@@ -213,9 +213,26 @@ async function downloadReservationNames(page, eventHash, dateId) {
   return rows.map((row) => String(row[nameColumn] || "").trim()).filter(Boolean);
 }
 
+// こくちーずPROはGitHub Actionsからのアクセスで断続的な接続不調
+// (page.goto自体の失敗/フォーム要素が時間内に現れない等、症状が
+// 毎回異なる)が実測で確認されており、ロジック自体は正しくても
+// 単発の実行では失敗することがある。ログインだけ数回リトライすることで
+// この種の一過性の不調を吸収する。
+async function loginWithRetry(page, account, attempts = 3) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await login(page, account);
+      return;
+    } catch (err) {
+      console.error(`[kokuchpro診断] ログイン試行${attempt}/${attempts}失敗: ${err.message}`);
+      if (attempt === attempts) throw err;
+    }
+  }
+}
+
 async function scrapeAccount(account) {
   return withBrowser(`kokuchpro-${account.label}`, async (page) => {
-    await login(page, account);
+    await loginWithRetry(page, account);
     console.error("[kokuchpro診断] ログイン成功");
 
     const eventAdminUrls = await listEventAdminUrls(page);
