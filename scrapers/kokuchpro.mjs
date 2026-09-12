@@ -134,7 +134,14 @@ async function listSessions(page, eventAdminUrl) {
     if (!label || label.includes("開催日の追加") || /^-+$/.test(label)) continue;
 
     await select.selectOption({ index: i });
-    await page.waitForLoadState("networkidle").catch(() => {});
+    // submitForm/一覧ページと同じ問題: 広告読み込みのせいでnetworkidleが
+    // 成立せず、開催回数(セッション)が多いイベントで1回あたり最大60秒
+    // 粘ってしまい、1件のイベントだけで外側のタイムアウトを使い切って
+    // いた(実測で確認)。ここで本当に必要なのは「URLが開催日ごとの
+    // 管理画面に変わったこと」だけなので、load-state系ではなく
+    // waitForURLで直接それを待つ(domcontentloadedだと遷移開始前に
+    // 呼んでしまい即座に解決してしまう競合の恐れがあるため)。
+    await page.waitForURL(EVENT_ADMIN_URL_RE, { timeout: 15000 }).catch(() => {});
     const match = page.url().match(EVENT_ADMIN_URL_RE);
     if (!match) continue;
     const [, eventHash, dateId] = match;
