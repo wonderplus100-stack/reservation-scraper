@@ -72,6 +72,14 @@ async function login(page, account) {
   await passwordInput.fill(account.password);
   await submitForm(page, passwordInput);
 
+  // パスワード送信直後の状態を必ず記録する。ここでログインが実際に
+  // 成功しているのか(マイイベント等のページに遷移しているのか)、
+  // それとも追加確認(2FA/デバイス認証等)や送信失敗で足止めされて
+  // いるのかが、ダッシュボードが常にログアウト状態になる原因の
+  // 切り分けに必要なため。
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await logDiagnostics(page, "パスワード送信直後");
+
   if (account.totpSecret) {
     // TODO(要確認): Peatixの2段階認証コード入力欄のセレクタ。
     const totpInput = page.locator('input[name="otp"], input[name="code"], input[autocomplete="one-time-code"]');
