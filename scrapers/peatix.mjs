@@ -1,9 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { submitForm, withBrowser } from "../lib/browser.mjs";
-import { generateTotpCode } from "../lib/totp.mjs";
+import { withBrowser } from "../lib/browser.mjs";
 import { decodeUtf16Le, findColumn, tableFromCsv } from "../lib/csv.mjs";
-
-const LOGIN_URL = "https://peatix.com/signin";
 
 function accountsFromEnv() {
   const accounts = [];
@@ -31,63 +28,6 @@ async function logDiagnostics(page, label) {
     console.error(`[peatix診断:${label}] bodyText=${JSON.stringify(bodyText)}`);
   } catch (e) {
     console.error(`[peatix診断:${label}] 診断情報の取得にも失敗: ${e.message}`);
-  }
-}
-
-// Peatixのログインは「Sign in with emailをクリック→メール入力→Next→パスワード入力」の
-// 3段階(SPA)。以前はランディング画面が出ずメール欄がいきなり表示されていたが、
-// CI環境での診断ログにより、まず選択画面(Google/Appleでサインイン or
-// Sign in with email)が表示され、"Sign in with email"をクリックしないと
-// メール入力欄が現れないことが判明した。
-async function login(page, account) {
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
-
-  // domcontentloaded直後はReactの描画前で要素がまだ存在しないため、
-  // count()での即時チェックではなく、出現を待ってからクリックする
-  // (出なければ元々メール欄がある旧UIとみなしてスキップする)。
-  try {
-    await page
-      .getByText(/sign in with email|メール.*(サインイン|ログイン)/i)
-      .first()
-      .click({ timeout: 15000 });
-  } catch {
-    // 選択画面が出ない場合は何もしない(メール欄が直接表示されているはず)。
-  }
-
-  try {
-    await page.getByPlaceholder(/メール|email/i).fill(account.email, { timeout: 20000 });
-  } catch (err) {
-    await logDiagnostics(page, "メール入力欄が見つからない");
-    throw err;
-  }
-  try {
-    await page.getByRole("button", { name: /Next|次(へ|に進む)/i }).click({ timeout: 20000 });
-  } catch (err) {
-    await logDiagnostics(page, "Nextボタンが見つからない");
-    throw err;
-  }
-
-  const passwordInput = page.locator('input[type="password"]');
-  await passwordInput.waitFor({ state: "visible", timeout: 15000 });
-  await passwordInput.fill(account.password);
-  await submitForm(page, passwordInput);
-
-  // パスワード送信直後の状態を必ず記録する。ここでログインが実際に
-  // 成功しているのか(マイイベント等のページに遷移しているのか)、
-  // それとも追加確認(2FA/デバイス認証等)や送信失敗で足止めされて
-  // いるのかが、ダッシュボードが常にログアウト状態になる原因の
-  // 切り分けに必要なため。
-  await page.waitForLoadState("networkidle").catch(() => {});
-  await logDiagnostics(page, "パスワード送信直後");
-
-  if (account.totpSecret) {
-    // TODO(要確認): Peatixの2段階認証コード入力欄のセレクタ。
-    const totpInput = page.locator('input[name="otp"], input[name="code"], input[autocomplete="one-time-code"]');
-    if ((await totpInput.count()) > 0) {
-      await totpInput.first().fill(generateTotpCode(account.totpSecret));
-      await page.keyboard.press("Enter");
-      await page.waitForLoadState("networkidle").catch(() => {});
-    }
   }
 }
 
@@ -221,14 +161,18 @@ function isAuthenticatedDashboardUrl(url) {
 
 async function scrapeAccount(account) {
   return withBrowser(`peatix-${account.label}`, async (page, { hasSavedState }) => {
-    // Peatixはメール確認(ワンタイムコード)を都度要求する仕様のため、
-    // 毎回ログインし直すと自動化では突破できない。保存済みセッションが
-    // まだ有効ならログイン処理自体をスキップし、無効だった場合のみ
-    // (メール確認が必要になり失敗するとしても)通常のログインを試みる。
-    let dashboardUrl = hasSavedState ? await getDashboardUrl(page) : null;
+    // ユーザーからの確認事項: Peatixはパスワードだけでのログインを常に
+    // 受け付けず、メール確認(ワンタイムコード)を都度要求する仕様であり、
+    // 自動化では突破できない。そのため、保存済みセッションが有効な間は
+    // それを使い回し、無効になった(=誰かが手動でメールコードを使って
+    // 再ログインし、そのセッションが更新されるまで待つ必要がある)場合は
+    // 無駄なパスワードログインを試みず、はっきり分かるログを出して
+    // 即座にあきらめる(通知目的)。
+    const dashboardUrl = hasSavedState ? await getDashboardUrl(page) : null;
     if (!isAuthenticatedDashboardUrl(dashboardUrl)) {
-      await login(page, account);
-      dashboardUrl = await getDashboardUrl(page);
+      throw new Error(
+        `Peatix(${account.label}): 保存済みセッションが無効です。手動でメール確認コードを使って再ログインしてください(パスワードのみでの自動ログインはPeatixの仕様上できません)。`
+      );
     }
     const events = await listEvents(page, dashboardUrl);
 
@@ -254,7 +198,15 @@ export async function collect() {
   const rows = [];
 
   for (const account of accounts) {
-    const reservations = await scrapeAccount(account);
+    // 複数アカウント(Wonder+/Jua Party等)を扱うため、1アカウントの
+    // セッション切れ等の失敗が他アカウントの取得まで止めないようにする。
+    let reservations = [];
+    try {
+      reservations = await scrapeAccount(account);
+    } catch (err) {
+      console.error(`peatix(${account.label}) の取得に失敗しました:`, err.message);
+      continue;
+    }
     for (const reservation of reservations) {
       rows.push({
         platform: "peatix",
