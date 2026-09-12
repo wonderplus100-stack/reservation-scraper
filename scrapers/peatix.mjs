@@ -2,17 +2,17 @@ import { readFile } from "node:fs/promises";
 import { withBrowser } from "../lib/browser.mjs";
 import { decodeUtf16Le, findColumn, tableFromCsv } from "../lib/csv.mjs";
 
+// パスワードログインは廃止したため(下記scrapeAccount参照)、認証情報は
+// 使わない。EMAILの有無を「このアカウント枠を使う」目印としてのみ使い、
+// 実際の認証は保存済みセッション(storage-state、accountLabelでファイルを
+// 分ける)頼みになる。
 function accountsFromEnv() {
   const accounts = [];
   for (const index of [1, 2]) {
     const email = process.env[`PEATIX_${index}_EMAIL`];
-    const password = process.env[`PEATIX_${index}_PASSWORD`];
-    if (!email || !password) continue;
+    if (!email) continue;
     accounts.push({
-      label: process.env[`PEATIX_${index}_ACCOUNT_LABEL`] || `Peatix${index}`,
-      email,
-      password,
-      totpSecret: process.env[`PEATIX_${index}_TOTP_SECRET`] || ""
+      label: process.env[`PEATIX_${index}_ACCOUNT_LABEL`] || `Peatix${index}`
     });
   }
   return accounts;
