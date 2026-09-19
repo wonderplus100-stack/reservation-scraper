@@ -1,12 +1,14 @@
+import fs from "node:fs";
 import { readFile } from "node:fs/promises";
-import { withBrowser } from "../lib/browser.mjs";
+import { chromium } from "playwright";
+import { withBrowser, storageStatePath } from "../lib/browser.mjs";
 import { decodeUtf16Le, findColumn, tableFromCsv } from "../lib/csv.mjs";
 
 // パスワードログインは廃止したため(下記scrapeAccount参照)、認証情報は
 // 使わない。EMAILの有無を「このアカウント枠を使う」目印としてのみ使い、
 // 実際の認証は保存済みセッション(storage-state、accountLabelでファイルを
 // 分ける)頼みになる。
-function accountsFromEnv() {
+export function accountsFromEnv() {
   const accounts = [];
   for (const index of [1, 2]) {
     const email = process.env[`PEATIX_${index}_EMAIL`];
@@ -333,6 +335,44 @@ async function scrapeEventAttendees(page, eventId) {
 // それ以外(未ログイン時に飛ばされる公開ページ等)は未ログインとみなす。
 function isAuthenticatedDashboardUrl(url) {
   return /\/user\/\d+\/dashboard/.test(String(url || ""));
+}
+
+// ダッシュボードの「今すぐ更新」ボタンからの遠隔トリガー向け。
+// 保存済みセッションが有効ならブラウザを一瞬開いてCookieを更新するだけで
+// すぐ戻る。無効な場合は画面付き(headed)ブラウザを開いたまま待機し、
+// 手元でメール確認コードを使ってログインが完了するのを検知する。
+// 注意: manual-login.mjsと違いEnterキー入力を待たない。ログイン中の
+// フォーム操作を妨げないよう、ページの再読み込みは行わずpage.url()の
+// 変化だけを受動的に監視する。
+export async function ensureLoggedIn(accountLabel, { onStatus, timeoutMs = 15 * 60 * 1000 } = {}) {
+  const statePath = storageStatePath(`peatix-${accountLabel}`);
+  const hasSavedState = fs.existsSync(statePath);
+  const browser = await chromium.launch({ headless: false });
+  try {
+    const context = await browser.newContext(
+      hasSavedState ? { storageState: statePath, locale: "ja-JP" } : { locale: "ja-JP" }
+    );
+    const page = await context.newPage();
+    const dashboardUrl = await getDashboardUrl(page);
+    if (isAuthenticatedDashboardUrl(dashboardUrl)) {
+      // まだ有効でも、Cloudflareのボット対策Cookie(__cf_bm)は寿命が短いため
+      // 開いたついでに保存し直しておく(headedで開くだけで更新される)。
+      await context.storageState({ path: statePath });
+      return { loggedIn: true, wasAlreadyValid: true };
+    }
+    onStatus?.(`「${accountLabel}」アカウントの認証コードをGmailで確認し、開いたブラウザ画面でログインしてください`);
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      await page.waitForTimeout(2000);
+      if (isAuthenticatedDashboardUrl(page.url())) {
+        await context.storageState({ path: statePath });
+        return { loggedIn: true, wasAlreadyValid: false };
+      }
+    }
+    return { loggedIn: false, wasAlreadyValid: false, timedOut: true };
+  } finally {
+    await browser.close();
+  }
 }
 
 async function scrapeAccount(account) {
