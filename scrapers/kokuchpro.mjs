@@ -181,8 +181,19 @@ async function listSessions(page, eventAdminUrl) {
 }
 
 async function getEventTitle(page) {
-  // TODO(要確認): タイトルの実際のセレクタ。イベント管理画面上部の見出しリンクを仮定している。
-  const title = await page.locator('a[href*="/event/"]').first().textContent().catch(() => null);
+  // Browserペインで実アカウントを直接確認したところ、単純な
+  // a[href*="/event/"] だと最初に一致するのは「イベント管理」という
+  // ナビゲーションリンク(href="https://www.kokuchpro.com/mypage/event/")
+  // であり、実際のイベントタイトルではなかった(これがrawEventNameが
+  // 常に「イベント管理｜(終了)日付...」になり、公式スケジュールとの
+  // 日付+会場マッチングが全く成立しなかった原因)。実イベントタイトルへの
+  // リンクは "/event/{ハッシュ}/{ID}/" 形式(/mypage/や/admin/を含まない、
+  // 公開イベントページへのリンク)なので、それに絞り込む。
+  const title = await page
+    .locator('a[href^="https://www.kokuchpro.com/event/"]')
+    .first()
+    .textContent()
+    .catch(() => null);
   return (title || "").trim();
 }
 

@@ -3,3 +3,4 @@ node_modules/
 *.session.json
 storage-state/
 service-account.json
+logs/

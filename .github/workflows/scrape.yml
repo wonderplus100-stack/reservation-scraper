@@ -32,14 +32,6 @@ jobs:
           restore-keys: |
             storage-state-
 
-      - name: Seed Peatix sessions from manually-captured storage-state (if provided)
-        env:
-          PEATIX_1_ACCOUNT_LABEL: ${{ vars.PEATIX_1_ACCOUNT_LABEL }}
-          PEATIX_1_STORAGE_STATE: ${{ secrets.PEATIX_1_STORAGE_STATE }}
-          PEATIX_2_ACCOUNT_LABEL: ${{ vars.PEATIX_2_ACCOUNT_LABEL }}
-          PEATIX_2_STORAGE_STATE: ${{ secrets.PEATIX_2_STORAGE_STATE }}
-        run: node scripts/seed-peatix-sessions.mjs
-
       - name: Sync OfficialEvents from Wonder+ official schedule sheet
         env:
           SHEET_ID: ${{ vars.SHEET_ID }}
@@ -66,10 +58,6 @@ jobs:
           FORM_2_REFERRER_COLUMN_PATTERN: ${{ vars.FORM_2_REFERRER_COLUMN_PATTERN }}
           KOKUCHPRO_1_ACCOUNT_LABEL: ${{ vars.KOKUCHPRO_1_ACCOUNT_LABEL }}
           KOKUCHPRO_1_EMAIL: ${{ vars.KOKUCHPRO_1_EMAIL }}
-          PEATIX_1_ACCOUNT_LABEL: ${{ vars.PEATIX_1_ACCOUNT_LABEL }}
-          PEATIX_1_EMAIL: ${{ vars.PEATIX_1_EMAIL }}
-          PEATIX_2_ACCOUNT_LABEL: ${{ vars.PEATIX_2_ACCOUNT_LABEL }}
-          PEATIX_2_EMAIL: ${{ vars.PEATIX_2_EMAIL }}
           TUNAGATE_1_ACCOUNT_LABEL: ${{ vars.TUNAGATE_1_ACCOUNT_LABEL }}
           TUNAGATE_1_EMAIL: ${{ vars.TUNAGATE_1_EMAIL }}
           HEADLESS: "true"
@@ -79,4 +67,9 @@ jobs:
           KOKUCHPRO_1_TOTP_SECRET: ${{ secrets.KOKUCHPRO_1_TOTP_SECRET }}
           TUNAGATE_1_PASSWORD: ${{ secrets.TUNAGATE_1_PASSWORD }}
           TUNAGATE_1_TOTP_SECRET: ${{ secrets.TUNAGATE_1_TOTP_SECRET }}
-        run: node run.mjs
+        # Peatixはローカル(Windowsタスクスケジューラ)専用で実行するため、
+        # GitHub Actions側では対象外にする。除外しないと、GH Actions側は
+        # ヘッドレス+非対話式のためPeatixに必ずログイン失敗し、その「今回は
+        # 対象だが0件」という結果でRawData上の既存Peatixデータを毎回
+        # 上書き消去してしまう不具合があった。
+        run: node run.mjs --only=googleForms,kokuchpro,tunagate

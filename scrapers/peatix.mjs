@@ -47,7 +47,14 @@ async function getDashboardUrl(page) {
     .getAttribute("href")
     .catch(() => null);
   console.error(`[peatix診断] getDashboardUrl: href=${href} page.url=${page.url()}`);
-  return href || page.url();
+  // 見つかったリンクが「#tickets」付きの場合、それは参加者側の
+  // 「マイチケット」画面(開催予定/終了の少数タブ)へのリンクであり、
+  // 主催者側の「マイイベント」画面(公開中/編集中/終了、実件数が多い方)
+  // とは別物。Browserペインで実アカウントを直接確認したところ、ハッシュを
+  // 外した素のdashboard URLに遷移すると正しく「マイイベント」(主催者側)が
+  // デフォルト表示されることが分かったため、ハッシュ部分は常に除去する。
+  const raw = href || page.url();
+  return raw.split("#")[0];
 }
 
 // ダッシュボード(公開中タブ)に表示されているイベントの一覧を集める。
@@ -56,35 +63,199 @@ async function getDashboardUrl(page) {
 // 件数が多いアカウント(このアカウントは公開中だけで100件超、終了は1000件超)は
 // 無限スクロール/ページネーションで一部しか読み込まれていない可能性があるため、
 // 必要に応じてスクロールして追加読み込みさせる処理を足すこと(TODO)。
-async function listEvents(page, dashboardUrl) {
-  await page.goto(dashboardUrl, { waitUntil: "domcontentloaded" });
-  await page.waitForLoadState("networkidle").catch(() => {});
+// 「終了」タブ等は無限スクロールで追加読み込みされる(1回のクリックでは
+// 一部しか読み込まれない。実測: 終了1,174件のアカウントでスクロールなしだと
+// 40件しか取れなかった)。list_salesリンクの件数が増えなくなるまで
+// 下端へのスクロールを繰り返す。
+// ユーザーからの指示: 過去イベントは不要で、当月分だけで良い。イベントは
+// 新しい日付順(降順)に並んでいるため、読み込み済みの中の最古の日付が
+// 対象月より前になった時点でスクロールを打ち切ることで、Wonder Plusのような
+// 終了イベント1,000件超のアカウントでも大量アクセスを避けられる
+// (WAF等のアクセス制限に引っかかるリスクを下げる目的)。
+async function scrollToLoadAll(page, { maxIterations = 150, stableRounds = 3, waitMs = 600, stopBeforeMonth = null } = {}) {
+  let lastCount = -1;
+  let stableStreak = 0;
+  for (let i = 0; i < maxIterations; i += 1) {
+    const count = await page
+      .evaluate(() => document.querySelectorAll('a[href*="/list_sales"]').length)
+      .catch(() => 0);
+    if (count === lastCount) {
+      stableStreak += 1;
+      if (stableStreak >= stableRounds) break;
+    } else {
+      stableStreak = 0;
+    }
+    lastCount = count;
 
-  const events = await page.evaluate(() => {
+    if (stopBeforeMonth) {
+      const oldestKey = await page
+        .evaluate(() => {
+          let minKey = null;
+          for (const link of document.querySelectorAll('a[href*="/list_sales"]')) {
+            let el = link;
+            for (let i = 0; i < 8 && el; i += 1) {
+              el = el.parentElement;
+              if (!el) break;
+              const m = (el.textContent || "").match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+              if (m) {
+                const key = Number(m[1]) * 100 + Number(m[2]);
+                if (minKey === null || key < minKey) minKey = key;
+                break;
+              }
+            }
+          }
+          return minKey;
+        })
+        .catch(() => null);
+      const targetKey = stopBeforeMonth.year * 100 + stopBeforeMonth.month;
+      if (oldestKey !== null && oldestKey < targetKey) break;
+    }
+
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+    await page.waitForTimeout(waitMs);
+  }
+  return lastCount;
+}
+
+async function collectEventsFromDom(page) {
+  return page.evaluate(() => {
     const results = [];
+    const samples = [];
     for (const link of document.querySelectorAll('a[href*="/list_sales"]')) {
       const idMatch = link.href.match(/\/event\/(\d+)\/list_sales/);
       if (!idMatch) continue;
       let container = link;
       let title = "";
       let applied = 0;
+      let dateYear = null;
+      let dateMonth = null;
+      let dateDay = null;
+      // 以前は「applied か title のどちらか見つかった時点で打ち切り」だったため、
+      // 見出し(title)が浅い階層で先に見つかると、より深い階層にしかない
+      // 申込み数テキストへ到達する前にループが終わってしまい、applied が
+      // 常に0のままになるバグがあった(実際に全イベントでapplied=0を確認)。
+      // 両方揃うか8階層登り切るまで探索を続けるように修正。
       for (let i = 0; i < 8 && container; i += 1) {
         container = container.parentElement;
         if (!container) break;
         const text = container.textContent || "";
-        const countMatch = text.match(/申し込み数[:：]\s*(\d+)/);
-        if (countMatch) applied = Number(countMatch[1]);
-        const heading = container.querySelector("h1, h2, h3, a[href*='/event/'][href*='/view']");
-        if (heading && heading.textContent.trim()) title = heading.textContent.trim();
-        if (applied || title) break;
+        const countMatch = text.match(/(?:申し?込み?数|参加(?:者)?数|販売数|チケット数)[:：]?\s*(\d+)/);
+        if (countMatch && !applied) applied = Number(countMatch[1]);
+        if (dateYear === null) {
+          const dateMatch = text.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+          if (dateMatch) {
+            dateYear = Number(dateMatch[1]);
+            dateMonth = Number(dateMatch[2]);
+            dateDay = Number(dateMatch[3]);
+          }
+        }
+        if (!title) {
+          // Browserペインで実DOM構造を確認したところ、イベント名は
+          // h3.pod-event-name、日付はtime.event-datetimeという専用クラスを
+          // 持っていた。以前はh1〜h3や"/view"リンクを広く拾っていたため、
+          // 「参加者」「公開ページ」等の別リンクのテキストを誤って
+          // イベント名として使ってしまうバグがあった(全件が実質的に
+          // タイトル抽出に失敗し、公式スケジュールとの照合が成立しなかった)。
+          const heading = container.querySelector("h3.pod-event-name") || container.querySelector("h1, h2, h3");
+          if (heading && heading.textContent.trim()) title = heading.textContent.replace(/\s+/g, " ").trim();
+        }
+        if (dateYear === null) {
+          const timeEl = container.querySelector("time.event-datetime");
+          const timeMatch = timeEl && timeEl.textContent.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+          if (timeMatch) {
+            dateYear = Number(timeMatch[1]);
+            dateMonth = Number(timeMatch[2]);
+            dateDay = Number(timeMatch[3]);
+          }
+        }
+        if (applied && title && dateYear !== null) break;
       }
-      results.push({ eventId: idMatch[1], title, applied });
+      if (samples.length < 2) {
+        samples.push((container ? container.textContent || "" : "").replace(/\s+/g, " ").trim().slice(0, 500));
+      }
+      results.push({ eventId: idMatch[1], title, applied, dateYear, dateMonth, dateDay });
     }
     // 重複除去(同じイベントが複数箇所にリンクされている場合がある)
     const byId = new Map(results.map((r) => [r.eventId, r]));
-    return Array.from(byId.values());
+    return { events: Array.from(byId.values()), sampleContainerTexts: samples };
   });
-  console.error(`[peatix診断] dashboardUrl=${dashboardUrl} 実際のURL=${page.url()} イベント件数=${events.length}`);
+}
+
+// 実アカウントのダッシュボードをBrowserペインで直接確認したところ、タブは
+// 「公開中|84」「編集中|166」「終了|1,174」の3種類(開催予定/終了、ではない)。
+// 初期表示は「公開中」タブのみDOMにあり、他タブはクリックして初めてAjaxで
+// 丸ごと読み込まれる(ページネーション/無限スクロールは不要。クリック後は
+// 該当タブの全件が一度にDOMへ挿入されることを実測で確認: 終了1,174件クリック後
+// document.querySelectorAll('a[href*="list_sales"]').length が公開中+終了の
+// 合計とほぼ一致した)。編集中(下書き)には参加者がいないため対象外とする。
+// 「終了」タブのリンクは href="javascript:void(0);" かつ表示名が
+// 「終了 | 1,174」の形式。ページ内には「受付終了」(個別イベントの状態表示)や
+// href="#finished" の別リンクも「終了」を含むテキストとして存在し、単純な
+// 完全一致(exact:"終了")だとそちらを誤クリックしてしまうバグがあったため、
+// 「終了 | 数字」の形に一致するものだけを狙う。
+async function listEvents(page, dashboardUrl) {
+  await page.goto(dashboardUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForLoadState("networkidle").catch(() => {});
+
+  // dashboard(SPA)は「グループ」(主催者イベント一覧)と「チケット」(参加者
+  // 側のマイチケット)の2大タブを持ち、直接同じURLへ遷移しても、ブラウザの
+  // localStorage等に残った直前の選択タブの状態次第で「チケット」側が
+  // デフォルト表示されてしまうケースを実機で確認した(公開中/編集中/終了の
+  // 主催者イベント一覧ではなく、開催予定/終了の参加者チケット一覧が出てしまう)。
+  // 確実に主催者イベント一覧を表示させるため、明示的に「グループ」タブを
+  // クリックする。
+  const groupTab = page.getByRole("link", { name: "グループ", exact: true }).or(page.getByRole("button", { name: "グループ", exact: true }));
+  const groupTabCount = await groupTab.count().catch(() => 0);
+  if (groupTabCount > 0) {
+    await groupTab.first().click().catch((e) => console.error(`[peatix診断] グループタブのクリックに失敗: ${e.message}`));
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await page.waitForTimeout(1500);
+  } else {
+    console.error("[peatix診断] グループタブが見つかりませんでした");
+  }
+
+  const allEvents = new Map();
+  let lastSamples = [];
+
+  // ユーザー指示により、過去イベントは不要で当月分のみ対象とする。
+  const now = new Date();
+  const targetMonth = { year: now.getFullYear(), month: now.getMonth() + 1 };
+
+  await scrollToLoadAll(page, { stopBeforeMonth: targetMonth });
+  const { events: publishedEvents, sampleContainerTexts: publishedSamples } = await collectEventsFromDom(page);
+  for (const ev of publishedEvents) allEvents.set(ev.eventId, ev);
+  lastSamples = publishedSamples;
+  console.error(`[peatix診断] 公開中タブ イベント件数=${publishedEvents.length}`);
+
+  const endedTab = page.getByRole("link", { name: /^終了\s*\|/ });
+  const endedTabCount = await endedTab.count().catch(() => 0);
+  if (endedTabCount > 0) {
+    await endedTab.first().click().catch((e) => console.error(`[peatix診断] 終了タブのクリックに失敗: ${e.message}`));
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await page.waitForTimeout(2000);
+    await scrollToLoadAll(page, { stopBeforeMonth: targetMonth });
+    const { events: endedEvents, sampleContainerTexts: endedSamples } = await collectEventsFromDom(page);
+    for (const ev of endedEvents) allEvents.set(ev.eventId, ev);
+    lastSamples = endedSamples;
+    console.error(`[peatix診断] 終了タブ イベント件数=${endedEvents.length}`);
+  } else {
+    console.error("[peatix診断] 終了タブが見つかりませんでした");
+  }
+
+  const targetKey = targetMonth.year * 100 + targetMonth.month;
+  const beforeFilterCount = allEvents.size;
+  const events = Array.from(allEvents.values()).filter(
+    (e) => e.dateYear !== null && e.dateYear * 100 + e.dateMonth === targetKey
+  );
+  console.error(
+    `[peatix診断] 当月(${targetMonth.year}年${targetMonth.month}月)絞り込み: ${beforeFilterCount}件 → ${events.length}件`
+  );
+  console.error(`[peatix診断] dashboardUrl=${dashboardUrl} 実際のURL=${page.url()} 合計イベント件数=${events.length}`);
+  const appliedZeroCount = events.filter((e) => !e.applied).length;
+  if (appliedZeroCount > 0) {
+    console.error(`[peatix診断] applied=0のイベント数=${appliedZeroCount}/${events.length}`);
+    lastSamples.forEach((t, i) => console.error(`[peatix診断] サンプルコンテナtext[${i}]=${JSON.stringify(t)}`));
+  }
   if (events.length === 0) {
     await logDiagnostics(page, "ダッシュボードでイベントが0件");
   }
@@ -184,10 +355,19 @@ async function scrapeAccount(account) {
     const reservations = [];
     for (const event of events) {
       if (!event.applied) continue; // 申込み0件のイベントはスキップ
+      // WAF等のアクセス制限を刺激しないよう、イベントページ間に短い間隔を空ける。
+      await page.waitForTimeout(400);
       const attendees = await scrapeEventAttendees(page, event.eventId);
+      // 公式スケジュール(matchOfficialEvent)は日付+会場をrawEventNameの
+      // テキストから抽出するため、Peatixのイベントタイトル自体には日付が
+      // 含まれない(ダッシュボード上は別欄表示)点を補って埋め込む。
+      // これが無いと、こくちーずPROの旧不具合と同様に常に「未マッピング」に
+      // なってしまう。
+      const dateSuffix = event.dateMonth && event.dateDay ? `｜${event.dateMonth}月${event.dateDay}日` : "";
+      const rawEventName = `${event.title || event.eventId}${dateSuffix}`;
       for (const attendee of attendees) {
         reservations.push({
-          rawEventName: event.title || event.eventId,
+          rawEventName,
           reservationName: attendee.name,
           readingKatakana: attendee.readingKatakana
         });
