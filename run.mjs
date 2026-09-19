@@ -169,13 +169,30 @@ async function main() {
   // (appendすると実行のたびに重複が積み上がるため)。ただし --only で一部の
   // 媒体だけを実行した場合、対象外の媒体の直近データを消してしまわないよう、
   // 既存シートから対象外媒体の行だけ残して合成する。
+  //
+  // 重要: 対象媒体であっても、今回の実行が(セッション切れ等で)1件も
+  // 取得できなかった場合は「今回のスナップショットで置き換える」対象から
+  // 除外し、既存の行をそのまま残す。これが無いと、例えばPeatixの
+  // ログインセッションが切れているタイミングで定期実行が走るたびに
+  // 「今回は対象だが0件」として直前まで正常に取得できていたデータごと
+  // 消してしまう事故が起きる(実際に複数回発生した)。
   const [existingRaw, existingUnmapped] = await Promise.all([
     readSheetAsObjects(sheetId, RAW_DATA_SHEET),
     readSheetAsObjects(sheetId, UNMAPPED_SHEET)
   ]);
   const targetSet = new Set(targets);
-  const keptRaw = existingRaw.filter((row) => !targetSet.has(row.platform));
-  const keptUnmapped = existingUnmapped.filter((row) => !targetSet.has(row.platform));
+  const platformsWithFreshData = new Set(rawRows.map((row) => row.platform));
+  const platformsToReplace = new Set(
+    [...targetSet].filter((platform) => platformsWithFreshData.has(platform))
+  );
+  const skippedPlatforms = [...targetSet].filter((platform) => !platformsWithFreshData.has(platform));
+  if (skippedPlatforms.length > 0) {
+    console.warn(
+      `今回0件だったため既存データを維持した媒体: ${skippedPlatforms.join(", ")}(取得失敗の可能性があります)`
+    );
+  }
+  const keptRaw = existingRaw.filter((row) => !platformsToReplace.has(row.platform));
+  const keptUnmapped = existingUnmapped.filter((row) => !platformsToReplace.has(row.platform));
 
   const finalRaw = [...keptRaw, ...resolved];
   const finalUnmapped = [...keptUnmapped, ...unmapped];
