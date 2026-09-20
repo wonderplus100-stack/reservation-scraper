@@ -170,29 +170,34 @@ async function main() {
   // 媒体だけを実行した場合、対象外の媒体の直近データを消してしまわないよう、
   // 既存シートから対象外媒体の行だけ残して合成する。
   //
-  // 重要: 対象媒体であっても、今回の実行が(セッション切れ等で)1件も
-  // 取得できなかった場合は「今回のスナップショットで置き換える」対象から
-  // 除外し、既存の行をそのまま残す。これが無いと、例えばPeatixの
-  // ログインセッションが切れているタイミングで定期実行が走るたびに
-  // 「今回は対象だが0件」として直前まで正常に取得できていたデータごと
-  // 消してしまう事故が起きる(実際に複数回発生した)。
+  // 重要: 対象媒体であっても、(セッション切れ等で)今回1件も取得できな
+  // かった「media+account」の組み合わせは、「今回のスナップショットで
+  // 置き換える」対象から除外し、既存の行をそのまま残す。
+  // 媒体単位(platformのみ)で判定すると、例えばPeatixのWonder Plusだけ
+  // ログイン失敗してJua Partyは成功した場合に、「peatixは今回データが
+  // あった」と判定されてWonder Plus側の既存データだけが失われてしまう
+  // (媒体単位の判定だけでは防げなかった実際の事故)。platform+account の
+  // 組み合わせ単位で判定することで、これを防ぐ。
   const [existingRaw, existingUnmapped] = await Promise.all([
     readSheetAsObjects(sheetId, RAW_DATA_SHEET),
     readSheetAsObjects(sheetId, UNMAPPED_SHEET)
   ]);
   const targetSet = new Set(targets);
-  const platformsWithFreshData = new Set(rawRows.map((row) => row.platform));
-  const platformsToReplace = new Set(
-    [...targetSet].filter((platform) => platformsWithFreshData.has(platform))
+  const accountKey = (row) => `${row.platform}|||${row.account}`;
+  const accountsWithFreshData = new Set(rawRows.map(accountKey));
+  const shouldReplace = (row) => targetSet.has(row.platform) && accountsWithFreshData.has(accountKey(row));
+
+  const existingAccountKeys = new Set([...existingRaw, ...existingUnmapped].map(accountKey));
+  const skippedAccounts = [...existingAccountKeys].filter(
+    (key) => targetSet.has(key.split("|||")[0]) && !accountsWithFreshData.has(key)
   );
-  const skippedPlatforms = [...targetSet].filter((platform) => !platformsWithFreshData.has(platform));
-  if (skippedPlatforms.length > 0) {
+  if (skippedAccounts.length > 0) {
     console.warn(
-      `今回0件だったため既存データを維持した媒体: ${skippedPlatforms.join(", ")}(取得失敗の可能性があります)`
+      `今回0件だったため既存データを維持したアカウント: ${skippedAccounts.map((k) => k.replace("|||", "/")).join(", ")}(取得失敗の可能性があります)`
     );
   }
-  const keptRaw = existingRaw.filter((row) => !platformsToReplace.has(row.platform));
-  const keptUnmapped = existingUnmapped.filter((row) => !platformsToReplace.has(row.platform));
+  const keptRaw = existingRaw.filter((row) => !shouldReplace(row));
+  const keptUnmapped = existingUnmapped.filter((row) => !shouldReplace(row));
 
   const finalRaw = [...keptRaw, ...resolved];
   const finalUnmapped = [...keptUnmapped, ...unmapped];
