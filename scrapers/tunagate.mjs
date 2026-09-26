@@ -1,64 +1,53 @@
-import { submitForm, withBrowser } from "../lib/browser.mjs";
-import { generateTotpCode } from "../lib/totp.mjs";
-
-const LOGIN_URL = "https://tunagate.com/users/sign_in";
-const MANAGEMENT_URL = "https://tunagate.com/mypage/management";
+import { withBrowser } from "../lib/browser.mjs";
 
 // 重要な制約(実アカウントで確認済み):
 // つなげーとの参加者は「本名非公開設定」にしている場合、氏名の代わりに
 // @ハンドル名(例: @z6EpIt)しか取得できない。この場合、他媒体(こくちーずPRO/
 // Peatix/Googleフォーム)の氏名とは名寄せできない。氏名が非公開でない参加者は
 // familyname/firstnameに本名が入る。
+//
+// 2026年9月に画面確認したところ、つなげーとはパスワードログインを廃止し
+// 「メールアドレスのみ+認証メール」方式に変わっていた(Peatixと同様、
+// 自動化ではメール確認を突破できない)。そのためパスワードは使わず、
+// 保存済みセッション(storage-state、scripts/tunagate-manual-login.mjsで
+// 手元PCから手動ログインして作成)を使い回す方式にした。
 
 function accountsFromEnv() {
   const accounts = [];
   const email = process.env.TUNAGATE_1_EMAIL;
-  const password = process.env.TUNAGATE_1_PASSWORD;
-  if (email && password) {
-    accounts.push({
-      label: process.env.TUNAGATE_1_ACCOUNT_LABEL || "つなげーと",
-      email,
-      password,
-      totpSecret: process.env.TUNAGATE_1_TOTP_SECRET || ""
-    });
-  }
+  if (!email) return accounts;
+  accounts.push({
+    label: process.env.TUNAGATE_1_ACCOUNT_LABEL || "つなげーと"
+  });
   return accounts;
 }
 
-// つなげーとのログインは「メール入力→ログインボタン→(次のステップで)パスワード入力」
-// の2段階(実アカウントで確認済み)。
-async function login(page, account) {
-  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
-  await page.getByPlaceholder("your@email.com").fill(account.email);
-  await Promise.all([
-    page.waitForLoadState("networkidle").catch(() => {}),
-    page.getByRole("button", { name: "ログイン" }).click()
-  ]);
-
-  const passwordInput = page.locator('input[type="password"]');
-  await passwordInput.waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
-  if ((await passwordInput.count()) > 0) {
-    await passwordInput.fill(account.password);
-    await submitForm(page, passwordInput);
-  }
-
-  if (account.totpSecret) {
-    // TODO(要確認): つなげーとの2段階認証コード入力欄のセレクタ。
-    const totpInput = page.locator('input[name="otp"], input[name="code"], input[autocomplete="one-time-code"]');
-    if ((await totpInput.count()) > 0) {
-      await totpInput.first().fill(generateTotpCode(account.totpSecret));
-      await page.keyboard.press("Enter");
-      await page.waitForLoadState("networkidle").catch(() => {});
-    }
-  }
+// 実際に確認したところ /mypage/management は404になっており、リダイレクトも
+// 発生しないため「/users/sign_in にリダイレクトされないこと」では未ログイン
+// を検知できなかった(常に「ログイン済み」と誤判定していた)。トップページに
+// 「ログイン」リンクが残っているかどうかで判定する(manual-login.mjsと同じ方式)。
+async function checkLoggedIn(page) {
+  await page.goto("https://tunagate.com/", { waitUntil: "domcontentloaded" }).catch(() => {});
+  await page.waitForLoadState("networkidle").catch(() => {});
+  console.error(`[つなげーと診断] checkLoggedIn url=${page.url()}`);
+  const hasLoginLink = await page
+    .locator('a[href*="/users/sign_in"]')
+    .first()
+    .isVisible()
+    .catch(() => false);
+  return !hasLoginLink;
 }
 
 // 「サークル・アカウント管理」ページから、管理しているサークルIDを集める。
 async function listCircleIds(page) {
-  await page.goto(MANAGEMENT_URL);
   const hrefs = await page.locator('a[href^="/circle/"]').evaluateAll((els) =>
     els.map((el) => el.getAttribute("href")).filter((href) => /^\/circle\/\d+$/.test(href || ""))
   );
+  console.error(`[つなげーと診断] circleId候補=${JSON.stringify(hrefs)}`);
+  if (hrefs.length === 0) {
+    const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 400)).catch(() => "");
+    console.error(`[つなげーと診断] bodyText=${JSON.stringify(bodyText)}`);
+  }
   return Array.from(new Set(hrefs.map((href) => href.split("/")[2])));
 }
 
@@ -121,8 +110,13 @@ async function scrapeParticipants(page, eventId) {
 }
 
 async function scrapeAccount(account) {
-  return withBrowser(`tunagate-${account.label}`, async (page) => {
-    await login(page, account);
+  return withBrowser(`tunagate-${account.label}`, async (page, { hasSavedState }) => {
+    const loggedIn = hasSavedState && (await checkLoggedIn(page));
+    if (!loggedIn) {
+      throw new Error(
+        `つなげーと(${account.label}): 保存済みセッションが無効です。手動で認証メールを使って再ログインしてください(node scripts/tunagate-manual-login.mjs "${account.label}")。`
+      );
+    }
 
     const circleIds = await listCircleIds(page);
     const reservations = [];
@@ -143,7 +137,13 @@ export async function collect() {
   const rows = [];
 
   for (const account of accounts) {
-    const reservations = await scrapeAccount(account);
+    let reservations = [];
+    try {
+      reservations = await scrapeAccount(account);
+    } catch (err) {
+      console.error(`tunagate(${account.label}) の取得に失敗しました:`, err.message);
+      continue;
+    }
     for (const reservation of reservations) {
       rows.push({
         platform: "tunagate",

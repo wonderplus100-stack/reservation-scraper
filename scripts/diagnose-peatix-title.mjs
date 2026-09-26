@@ -13,23 +13,35 @@ await withBrowser("peatix-Wonder Plus", async (page, { hasSavedState }) => {
     await endedTab.first().click().catch(() => {});
     await page.waitForLoadState("networkidle").catch(() => {});
     await page.waitForTimeout(2000);
-    for (let i = 0; i < 20; i += 1) {
-      const found = await page.evaluate(() =>
-        Array.from(document.querySelectorAll("h3.pod-event-name")).some((h) => h.textContent.includes("ENTERTAINMENT"))
-      );
+    for (let i = 0; i < 80; i += 1) {
+      const found = await page.evaluate(() => !!document.querySelector('a[href*="5170199"]'));
       if (found) break;
+      const before = await page.evaluate(() => document.querySelectorAll('a[href*="/list_sales"]').length);
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
       await page.waitForTimeout(500);
+      const after = await page.evaluate(() => document.querySelectorAll('a[href*="/list_sales"]').length);
+      if (after === before && i > 5) break; // これ以上読み込まれない
     }
   }
   console.log("url:", page.url());
 
+  const groupsInfo = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('a[href*="/group/"]')).map((a) => ({
+      href: a.href,
+      text: a.textContent.trim().slice(0, 80)
+    }));
+  });
+  console.log("groups:", JSON.stringify(groupsInfo, null, 1));
+
   const info = await page.evaluate(() => {
-    const heading = Array.from(document.querySelectorAll("h3.pod-event-name")).find((h) =>
-      h.textContent.includes("ENTERTAINMENT")
-    );
-    if (!heading) return { error: "ENTERTAINMENTイベントの見出しが見つかりません" };
-    const card = heading.closest("li");
+    const link = document.querySelector('a[href*="5170199"]');
+    if (!link) {
+      const all = Array.from(document.querySelectorAll("h3.pod-event-name")).filter((h) =>
+        h.textContent.includes("ENTERTAINMENT")
+      );
+      return { error: "5170199のリンクが見つかりません", entertainmentHeadingsFound: all.length, titles: all.map((h) => h.textContent.trim()) };
+    }
+    const card = link.closest("li");
     if (!card) return { error: "カード(li)が見つかりません" };
     const candidates = [];
     card.querySelectorAll("*").forEach((el) => {

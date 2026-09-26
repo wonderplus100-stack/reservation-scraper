@@ -74,9 +74,10 @@ async function getDashboardUrl(page) {
 // 対象月より前になった時点でスクロールを打ち切ることで、Wonder Plusのような
 // 終了イベント1,000件超のアカウントでも大量アクセスを避けられる
 // (WAF等のアクセス制限に引っかかるリスクを下げる目的)。
-async function scrollToLoadAll(page, { maxIterations = 150, stableRounds = 3, waitMs = 600, stopBeforeMonth = null } = {}) {
+async function scrollToLoadAll(page, { maxIterations = 150, stableRounds = 3, waitMs = 600, stopBeforeMonth = null, extraMarginRounds = 15 } = {}) {
   let lastCount = -1;
   let stableStreak = 0;
+  let pastBoundaryStreak = 0;
   for (let i = 0; i < maxIterations; i += 1) {
     const count = await page
       .evaluate(() => document.querySelectorAll('a[href*="/list_sales"]').length)
@@ -110,7 +111,17 @@ async function scrollToLoadAll(page, { maxIterations = 150, stableRounds = 3, wa
         })
         .catch(() => null);
       const targetKey = stopBeforeMonth.year * 100 + stopBeforeMonth.month;
-      if (oldestKey !== null && oldestKey < targetKey) break;
+      if (oldestKey !== null && oldestKey < targetKey) {
+        // 編集・再投稿されたイベントは日付順から外れて一覧の後方に
+        // 紛れ込むことがある(実際に、当月開催のイベントが古い日付の
+        // イベント群の中に埋もれて見つからないケースを確認した)。
+        // 境界を検知した時点で即座に打ち切らず、念のため数回分は
+        // 余分にスクロールしてから止める。
+        pastBoundaryStreak += 1;
+        if (pastBoundaryStreak >= extraMarginRounds) break;
+      } else {
+        pastBoundaryStreak = 0;
+      }
     }
 
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});

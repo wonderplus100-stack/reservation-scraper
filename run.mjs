@@ -14,11 +14,12 @@ import {
   writeSummary
 } from "./lib/sheetsClient.mjs";
 import * as googleForms from "./scrapers/googleForms.mjs";
+import * as jimoty from "./scrapers/jimoty.mjs";
 import * as kokuchpro from "./scrapers/kokuchpro.mjs";
 import * as peatix from "./scrapers/peatix.mjs";
 import * as tunagate from "./scrapers/tunagate.mjs";
 
-const SCRAPERS = { googleForms, kokuchpro, peatix, tunagate };
+const SCRAPERS = { googleForms, jimoty, kokuchpro, peatix, tunagate };
 
 // 1媒体あたりの上限時間。こくちーずPRO等がCI環境でハングし、
 // GitHub Actionsのジョブ上限を使い切って強制キャンセルされる事故が
@@ -36,7 +37,10 @@ const SCRAPER_TIMEOUT_OVERRIDES_MS = {
   // イベントだけに絞ってもなお実測で数百件規模になる(1アカウントあたり)。
   // 1件ずつ参加者一覧ページへ遷移してCSVをダウンロードする都合上、
   // 相応に時間がかかるため大きめの上限を設ける。
-  peatix: 60 * 60 * 1000
+  peatix: 60 * 60 * 1000,
+  // 問い合わせのある投稿ごとに「スレッド一覧ページ」+「記事ページ」の
+  // 2回遷移が必要(実測82投稿)なため、既定の3分では完走しない。
+  jimoty: 20 * 60 * 1000
 };
 
 function withTimeout(promise, ms, label) {
