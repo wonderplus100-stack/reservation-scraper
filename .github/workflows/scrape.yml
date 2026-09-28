@@ -58,18 +58,19 @@ jobs:
           FORM_2_REFERRER_COLUMN_PATTERN: ${{ vars.FORM_2_REFERRER_COLUMN_PATTERN }}
           KOKUCHPRO_1_ACCOUNT_LABEL: ${{ vars.KOKUCHPRO_1_ACCOUNT_LABEL }}
           KOKUCHPRO_1_EMAIL: ${{ vars.KOKUCHPRO_1_EMAIL }}
-          TUNAGATE_1_ACCOUNT_LABEL: ${{ vars.TUNAGATE_1_ACCOUNT_LABEL }}
-          TUNAGATE_1_EMAIL: ${{ vars.TUNAGATE_1_EMAIL }}
+          JIMOTY_1_ACCOUNT_LABEL: ${{ vars.JIMOTY_1_ACCOUNT_LABEL }}
+          JIMOTY_1_EMAIL: ${{ vars.JIMOTY_1_EMAIL }}
           HEADLESS: "true"
           # 機密情報(パスワード・TOTP・サービスアカウント鍵)は Secrets から。
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           KOKUCHPRO_1_PASSWORD: ${{ secrets.KOKUCHPRO_1_PASSWORD }}
           KOKUCHPRO_1_TOTP_SECRET: ${{ secrets.KOKUCHPRO_1_TOTP_SECRET }}
-          TUNAGATE_1_PASSWORD: ${{ secrets.TUNAGATE_1_PASSWORD }}
-          TUNAGATE_1_TOTP_SECRET: ${{ secrets.TUNAGATE_1_TOTP_SECRET }}
-        # Peatixはローカル(Windowsタスクスケジューラ)専用で実行するため、
-        # GitHub Actions側では対象外にする。除外しないと、GH Actions側は
-        # ヘッドレス+非対話式のためPeatixに必ずログイン失敗し、その「今回は
-        # 対象だが0件」という結果でRawData上の既存Peatixデータを毎回
-        # 上書き消去してしまう不具合があった。
-        run: node run.mjs --only=googleForms,kokuchpro,tunagate
+          JIMOTY_1_PASSWORD: ${{ secrets.JIMOTY_1_PASSWORD }}
+        # Peatix・つなげーとはどちらもメール確認が必須でヘッドレス+非対話式の
+        # GitHub Actionsでは自動ログインできないため、ローカル(Windowsタスク
+        # スケジューラ)専用で実行し、ここでは対象外にする。除外しないと、
+        # GH Actions側は必ずログイン失敗し、その「今回は対象だが0件」という
+        # 結果でRawData上の既存データを毎回上書き消去してしまう不具合があった。
+        # ジモティーはメール+パスワードのみでログインできるためGH Actionsで
+        # そのまま実行できる。
+        run: node run.mjs --only=googleForms,kokuchpro,jimoty
