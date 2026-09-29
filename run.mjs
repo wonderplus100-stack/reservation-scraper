@@ -13,13 +13,14 @@ import {
   resolveCanonicalEventId,
   writeSummary
 } from "./lib/sheetsClient.mjs";
+import * as evemado from "./scrapers/evemado.mjs";
 import * as googleForms from "./scrapers/googleForms.mjs";
 import * as jimoty from "./scrapers/jimoty.mjs";
 import * as kokuchpro from "./scrapers/kokuchpro.mjs";
 import * as peatix from "./scrapers/peatix.mjs";
 import * as tunagate from "./scrapers/tunagate.mjs";
 
-const SCRAPERS = { googleForms, jimoty, kokuchpro, peatix, tunagate };
+const SCRAPERS = { evemado, googleForms, jimoty, kokuchpro, peatix, tunagate };
 
 // 1媒体あたりの上限時間。こくちーずPRO等がCI環境でハングし、
 // GitHub Actionsのジョブ上限を使い切って強制キャンセルされる事故が
