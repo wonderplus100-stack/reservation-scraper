@@ -1,6 +1,13 @@
 import "dotenv/config";
 import { getVenueKey } from "../lib/venues.mjs";
-import { replaceOfficialEvents } from "../lib/sheetsClient.mjs";
+import {
+  RAW_DATA_SHEET,
+  readEventMaster,
+  readSheetAsObjects,
+  replaceEventMasterRows,
+  replaceOfficialEvents,
+  replaceRawRows
+} from "../lib/sheetsClient.mjs";
 
 // Wonder+公式サイト(https://wonderplus.ne.jp/)の「イベント」カスタム投稿
 // タイプをWordPress REST APIから取得し、予約データの有無によらない
@@ -40,6 +47,83 @@ async function fetchAllEvents() {
     if (rows.length < perPage) break;
   }
   return all;
+}
+
+// OfficialEventsは毎回全件を作り直す(replaceOfficialEvents)ため、公式サイト
+// 側の時刻表記の変化などでcanonicalEventIdの生成結果が変わると、既に
+// EventMaster/RawDataに書き込み済みの古いIDがどのOfficialEvents行とも
+// 一致しなくなり、該当する予約が「別イベント」として孤立してしまう
+// (実際に、時刻部分を「開始〜終了」から「開始のみ」に変える変更をした際、
+// 9/30 銀座 Wonder+CXOのPeatix・Googleフォーム予約が反映されなくなる
+// 事故が発生した)。それを防ぐため、同期の都度、孤立したofficial-*行を
+// 同じ月日+会場の現行イベントへ自動的に再マッピングする。
+function slugifyForMatch(time) {
+  return String(time || "").replace(/[^\d]/g, "");
+}
+
+async function reconcileStaleOfficialIds(sheetId, events) {
+  const officialIdSet = new Set(events.map((e) => e.canonicalEventId));
+  const byVenueDate = new Map();
+  for (const e of events) {
+    const key = `${e.month}|||${e.day}|||${e.venueKey}`;
+    if (!byVenueDate.has(key)) byVenueDate.set(key, []);
+    byVenueDate.get(key).push(e);
+  }
+
+  function resolveNewTarget(id) {
+    const match = id.match(/^official-(\d{1,2})-(\d{1,2})-([^-]+)-(\d+)$/);
+    if (!match) return null;
+    const [, month, day, venueKey, oldTimeSlug] = match;
+    const candidates = byVenueDate.get(`${month}|||${day}|||${venueKey}`) || [];
+    if (candidates.length === 0) return null;
+    const byTime = candidates.find((c) => oldTimeSlug.startsWith(slugifyForMatch(c.time)));
+    return byTime || candidates[0];
+  }
+
+  const [eventMaster, rawData] = await Promise.all([
+    readEventMaster(sheetId),
+    readSheetAsObjects(sheetId, RAW_DATA_SHEET)
+  ]);
+
+  const orphanedIds = new Set();
+  for (const row of eventMaster) {
+    const id = String(row.canonicalEventId || "");
+    if (id.startsWith("official-") && !officialIdSet.has(id)) orphanedIds.add(id);
+  }
+  for (const row of rawData) {
+    const id = String(row.canonicalEventId || "");
+    if (id.startsWith("official-") && !officialIdSet.has(id)) orphanedIds.add(id);
+  }
+  if (orphanedIds.size === 0) return;
+
+  const idRemap = new Map();
+  for (const id of orphanedIds) {
+    const target = resolveNewTarget(id);
+    if (target) idRemap.set(id, target);
+  }
+  if (idRemap.size === 0) return;
+
+  let eventMasterChanged = 0;
+  const updatedEventMaster = eventMaster.map((row) => {
+    const target = idRemap.get(String(row.canonicalEventId || ""));
+    if (!target) return row;
+    eventMasterChanged += 1;
+    return { ...row, canonicalEventId: target.canonicalEventId, canonicalEventName: target.canonicalEventName };
+  });
+  if (eventMasterChanged > 0) await replaceEventMasterRows(sheetId, updatedEventMaster);
+
+  let rawChanged = 0;
+  const updatedRawData = rawData.map((row) => {
+    const target = idRemap.get(row.canonicalEventId);
+    if (!target) return row;
+    rawChanged += 1;
+    return { ...row, canonicalEventId: target.canonicalEventId };
+  });
+  if (rawChanged > 0) await replaceRawRows(sheetId, updatedRawData);
+
+  console.log(
+    `孤立したEventMaster/RawDataの旧IDを再マッピングしました(EventMaster: ${eventMasterChanged}件, RawData: ${rawChanged}件)。`
+  );
 }
 
 async function main() {
@@ -86,6 +170,8 @@ async function main() {
 
   await replaceOfficialEvents(sheetId, events);
   console.log(`OfficialEventsをWonder+公式サイトの${events.length}件で更新しました。`);
+
+  await reconcileStaleOfficialIds(sheetId, events);
 }
 
 main().catch((err) => {
