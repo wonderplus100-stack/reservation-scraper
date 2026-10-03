@@ -6,6 +6,7 @@ import {
   UNMAPPED_SHEET,
   appendEventMasterRows,
   appendPlatformEventMapRows,
+  IGNORE_EVENT_ID,
   platformEventKey,
   readEventMaster,
   readOfficialEvents,
@@ -178,6 +179,7 @@ async function main() {
 
     if (row.platformEventId) {
       const mapped = mapByKey.get(platformEventKey(row.platform, row.platformEventId));
+      if (mapped && mapped.officialEventId === IGNORE_EVENT_ID) continue; // 人が「対象外」と確定済み
       const official = mapped ? officialById.get(mapped.officialEventId) : null;
       if (official) {
         canonicalEventId = official.canonicalEventId;
@@ -187,6 +189,7 @@ async function main() {
 
     if (!canonicalEventId) {
       canonicalEventId = resolveCanonicalEventId(eventMaster, row.platform, row.account, row.rawEventName);
+      if (canonicalEventId === IGNORE_EVENT_ID) continue; // 人が「対象外」と確定済み
       canonicalEventName = canonicalEventId ? eventMasterById.get(canonicalEventId)?.canonicalEventName : null;
       if (canonicalEventId && officialById.has(canonicalEventId)) {
         pinToPlatformEventMap(row, canonicalEventId, canonicalEventName);

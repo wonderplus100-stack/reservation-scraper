@@ -133,6 +133,7 @@ async function main() {
   const posts = await fetchAllEvents();
 
   const events = [];
+  const eventDates = [];
   const seenIds = new Set();
   let skipped = 0;
   for (const post of posts) {
@@ -162,6 +163,34 @@ async function main() {
     const canonicalEventName = [`${month}/${day}`, venueKey, eventName, time].filter(Boolean).join(" ");
 
     events.push({ canonicalEventId, canonicalEventName, month, day, venue: venueKey, venueKey, time, capacity: "" });
+    eventDates.push(new Date(Number(year), month - 1, day));
+  }
+
+  // 毎週木曜20:00-21:00の「オンライン異業種交流会」は公式サイトのイベント一覧に
+  // 載っていない(オンライン表記・オンライン会場のイベントは0件)が、Peatix・
+  // Googleフォーム2では毎週の開催として予約を受けている(ユーザーに確認済み)。
+  // 予約の受け皿になるよう、公式イベントの日付範囲内の木曜日分を補う。
+  // 公式サイトが将来オンラインのイベントを載せ始めた場合は、重複を避けて補わない。
+  if (eventDates.length > 0) {
+    const first = new Date(Math.min(...eventDates));
+    const last = new Date(Math.max(...eventDates));
+    const hasOnlineOnSite = new Set(events.filter((e) => e.venueKey === "オンライン").map((e) => `${e.month}-${e.day}`));
+    for (let d = new Date(first); d <= last; d.setDate(d.getDate() + 1)) {
+      if (d.getDay() !== 4) continue;
+      const month = d.getMonth() + 1;
+      const day = d.getDate();
+      if (hasOnlineOnSite.has(`${month}-${day}`)) continue;
+      events.push({
+        canonicalEventId: `official-${month}-${day}-オンライン-2000`,
+        canonicalEventName: `${month}/${day} オンライン Wonder+Online オンライン異業種交流会 20:00`,
+        month,
+        day,
+        venue: "オンライン",
+        venueKey: "オンライン",
+        time: "20:00",
+        capacity: ""
+      });
+    }
   }
 
   if (skipped > 0) {

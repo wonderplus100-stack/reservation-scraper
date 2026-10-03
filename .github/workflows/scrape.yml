@@ -32,7 +32,10 @@ jobs:
           restore-keys: |
             storage-state-
 
+      # 公式サイトに一時的に接続できなくても、既にシートにあるOfficialEventsで
+      # 集計を続けられるよう、この同期の失敗でジョブ全体を止めない。
       - name: Sync OfficialEvents from Wonder+ official site (wonderplus.ne.jp)
+        continue-on-error: true
         env:
           SHEET_ID: ${{ vars.SHEET_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
