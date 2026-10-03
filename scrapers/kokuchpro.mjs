@@ -272,6 +272,9 @@ async function scrapeAccount(account) {
         for (const reservationName of names) {
           reservations.push({
             rawEventName: `${eventTitle}｜${session.sessionLabel}`,
+            // 自動投稿ツールが記録する公開URL(/event/{ハッシュ}/{開催ID}/)と
+            // 同じ「ハッシュ/開催ID」形式のキー。タイトルが変わっても不変。
+            platformEventId: `${session.eventHash}/${session.dateId}`,
             reservationName
           });
         }
@@ -293,6 +296,7 @@ export async function collect() {
         platform: "kokuchpro",
         account: account.label,
         rawEventName: reservation.rawEventName,
+        platformEventId: reservation.platformEventId,
         reservationName: reservation.reservationName,
         obtainedAt
       });

@@ -5,8 +5,11 @@ import {
   RAW_DATA_SHEET,
   UNMAPPED_SHEET,
   appendEventMasterRows,
+  appendPlatformEventMapRows,
+  platformEventKey,
   readEventMaster,
   readOfficialEvents,
+  readPlatformEventMap,
   readSheetAsObjects,
   replaceRawRows,
   replaceUnmappedRows,
@@ -113,46 +116,93 @@ async function main() {
 
   const eventMaster = await readEventMaster(sheetId);
   const officialEvents = await readOfficialEvents(sheetId);
+  const platformEventMap = await readPlatformEventMap(sheetId);
   const eventMasterById = new Map(eventMaster.map((row) => [row.canonicalEventId, row]));
+  const officialById = new Map(officialEvents.map((event) => [event.canonicalEventId, event]));
+  const mapByKey = new Map(platformEventMap.map((row) => [platformEventKey(row.platform, row.platformEventId), row]));
 
-  // EventMasterで解決できなかった行は、Wonder+公式HPのスケジュール表
-  // (OfficialEvents)から日付+会場で突き合わせを試みる。一致すれば、
-  // 次回以降は通常のEventMaster解決で済むよう、その場でEventMasterにも
-  // 追記しておく(公式の正しい名称で登録されるため、従来の
-  // generate-event-master.mjsによる「生テキストそのまま」の登録より良質)。
+  // 解決の優先順位:
+  //  1) 媒体側のイベントID(PlatformEventMap)  ← タイトルが編集されても外れない
+  //  2) 旧来のEventMaster(生イベント名の一致)
+  //  3) 公式スケジュール(OfficialEvents)との日付+会場+シリーズ名による自動推測
+  // 2)・3)で解決できたものは、イベントIDがあればPlatformEventMapに
+  // (source=auto)として固定しておき、次回以降はタイトルに依存しない。
+  // IDを持たない媒体(Googleフォーム・ジモティ等)の3)はEventMasterへ追記する。
   const coveredKeys = new Set(
     eventMaster.map((row) => `${row.platform}|||${row.account}|||${normalizeEventName(row.rawEventName)}`)
   );
   const newEventMasterRows = [];
+  const newMapRows = [];
+  const nowIso = new Date().toISOString();
+
+  function pinToPlatformEventMap(row, canonicalEventId, canonicalEventName) {
+    if (!row.platformEventId) return;
+    const key = platformEventKey(row.platform, row.platformEventId);
+    if (mapByKey.has(key)) return;
+    const entry = {
+      platform: row.platform,
+      platformEventId: row.platformEventId,
+      officialEventId: canonicalEventId,
+      officialEventName: canonicalEventName,
+      title: row.rawEventName,
+      source: "auto",
+      updatedAt: nowIso
+    };
+    mapByKey.set(key, entry);
+    newMapRows.push(entry);
+  }
 
   const resolved = [];
   const unmapped = [];
+  const unresolvedRaw = []; // 紐づけ未確定でもダッシュボードの「未紐づけ」画面で扱えるよう、RawDataにも残す
 
   for (const row of rawRows) {
-    let canonicalEventId = resolveCanonicalEventId(eventMaster, row.platform, row.account, row.rawEventName);
-    let canonicalEventName = canonicalEventId ? eventMasterById.get(canonicalEventId)?.canonicalEventName : null;
+    let canonicalEventId = null;
+    let canonicalEventName = null;
+
+    if (row.platformEventId) {
+      const mapped = mapByKey.get(platformEventKey(row.platform, row.platformEventId));
+      const official = mapped ? officialById.get(mapped.officialEventId) : null;
+      if (official) {
+        canonicalEventId = official.canonicalEventId;
+        canonicalEventName = official.canonicalEventName;
+      }
+    }
+
+    if (!canonicalEventId) {
+      canonicalEventId = resolveCanonicalEventId(eventMaster, row.platform, row.account, row.rawEventName);
+      canonicalEventName = canonicalEventId ? eventMasterById.get(canonicalEventId)?.canonicalEventName : null;
+      if (canonicalEventId && officialById.has(canonicalEventId)) {
+        pinToPlatformEventMap(row, canonicalEventId, canonicalEventName);
+      }
+    }
 
     if (!canonicalEventId) {
       const officialMatch = matchOfficialEvent(row.rawEventName, officialEvents);
       if (officialMatch) {
         canonicalEventId = officialMatch.canonicalEventId;
         canonicalEventName = officialMatch.canonicalEventName;
-        const key = `${row.platform}|||${row.account}|||${normalizeEventName(row.rawEventName)}`;
-        if (!coveredKeys.has(key)) {
-          coveredKeys.add(key);
-          newEventMasterRows.push({
-            canonicalEventId,
-            canonicalEventName,
-            platform: row.platform,
-            account: row.account,
-            rawEventName: row.rawEventName
-          });
+        if (row.platformEventId) {
+          pinToPlatformEventMap(row, canonicalEventId, canonicalEventName);
+        } else {
+          const key = `${row.platform}|||${row.account}|||${normalizeEventName(row.rawEventName)}`;
+          if (!coveredKeys.has(key)) {
+            coveredKeys.add(key);
+            newEventMasterRows.push({
+              canonicalEventId,
+              canonicalEventName,
+              platform: row.platform,
+              account: row.account,
+              rawEventName: row.rawEventName
+            });
+          }
         }
       }
     }
 
     if (!canonicalEventId) {
       unmapped.push(row);
+      unresolvedRaw.push({ ...row, canonicalEventId: "", normalizedName: normalizeName(row.reservationName) });
       continue;
     }
     resolved.push({
@@ -166,6 +216,10 @@ async function main() {
   if (newEventMasterRows.length > 0) {
     await appendEventMasterRows(sheetId, newEventMasterRows);
     console.log(`公式スケジュールとの突き合わせでEventMasterに${newEventMasterRows.length}件追加しました。`);
+  }
+  if (newMapRows.length > 0) {
+    await appendPlatformEventMapRows(sheetId, newMapRows);
+    console.log(`媒体のイベントIDによる紐づけ(PlatformEventMap)に${newMapRows.length}件追加しました。`);
   }
 
   console.log(`resolved: ${resolved.length}, unmapped(要イベントマスタ登録): ${unmapped.length}`);
@@ -204,7 +258,7 @@ async function main() {
   const keptRaw = existingRaw.filter((row) => !shouldReplace(row));
   const keptUnmapped = existingUnmapped.filter((row) => !shouldReplace(row));
 
-  const finalRaw = [...keptRaw, ...resolved];
+  const finalRaw = [...keptRaw, ...resolved, ...unresolvedRaw];
   const finalUnmapped = [...keptUnmapped, ...unmapped];
 
   await replaceRawRows(sheetId, finalRaw);

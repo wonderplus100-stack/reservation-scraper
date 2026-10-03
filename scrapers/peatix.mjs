@@ -419,6 +419,7 @@ async function scrapeAccount(account) {
       for (const attendee of attendees) {
         reservations.push({
           rawEventName,
+          platformEventId: String(event.eventId),
           reservationName: attendee.name,
           readingKatakana: attendee.readingKatakana
         });
@@ -448,6 +449,7 @@ export async function collect() {
         platform: "peatix",
         account: account.label,
         rawEventName: reservation.rawEventName,
+        platformEventId: reservation.platformEventId,
         reservationName: reservation.reservationName,
         readingKatakana: reservation.readingKatakana || "",
         obtainedAt
