@@ -1,4 +1,5 @@
 import "dotenv/config";
+import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { matchOfficialEventByStart } from "../lib/officialEventMatcher.mjs";
@@ -58,48 +59,63 @@ async function main() {
   let updatedRows = 0;
   const unmatched = [];
 
-  for (const campaign of campaigns) {
-    const peatixId = String(campaign.event_key).replace(/^peatix-/, "");
-    const start = String(campaign.start_at || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  // 1つのイベント(開始日時+タイトル)を公式イベントに特定し、その媒体ごとのIDを登録する。
+  function register(title, startAtText, targets) {
+    const start = String(startAtText || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
     if (!start) {
-      unmatched.push({ title: campaign.title, startAt: campaign.start_at, reason: "開始日時が不正" });
-      continue;
+      unmatched.push({ title, startAt: startAtText, reason: "開始日時が不正" });
+      return;
     }
     const official = matchOfficialEventByStart(
-      { month: Number(start[2]), day: Number(start[3]), time: `${start[4]}:${start[5]}`, title: campaign.title },
+      { month: Number(start[2]), day: Number(start[3]), time: `${start[4]}:${start[5]}`, title },
       officialEvents
     );
     if (!official) {
-      unmatched.push({ title: campaign.title, startAt: campaign.start_at, reason: "公式イベントを一意に特定できない" });
-      continue;
+      unmatched.push({ title, startAt: startAtText, reason: "公式イベントを一意に特定できない" });
+      return;
     }
     mappedEvents += 1;
-
-    const targets = [{ platform: "peatix", platformEventId: peatixId }];
-    for (const urlRow of urlsByEvent.get(campaign.event_key) || []) {
-      if (urlRow.medium !== "kokuchpro") continue;
-      const key = parseKokuchproKey(urlRow.event_url);
-      if (key) targets.push({ platform: "kokuchpro", platformEventId: key });
-    }
-
     for (const target of targets) {
       const key = platformEventKey(target.platform, target.platformEventId);
       const current = byKey.get(key);
       // 人が確定したもの(manual)は、自動処理で上書きしない。
       if (current && current.source === "manual") continue;
       if (current && current.source === "posting-tool" && current.officialEventId === official.canonicalEventId) continue;
-      const entry = {
+      byKey.set(key, {
         platform: target.platform,
         platformEventId: target.platformEventId,
         officialEventId: official.canonicalEventId,
         officialEventName: official.canonicalEventName,
-        title: campaign.title,
+        title,
         source: "posting-tool",
         updatedAt: nowIso
-      };
-      byKey.set(key, entry);
+      });
       if (current) updatedRows += 1;
       else addedRows += 1;
+    }
+  }
+
+  // (a) campaign_hub.sqlite3: Peatix↔こくちーずの対応(8/20頃までの投稿分)
+  for (const campaign of campaigns) {
+    const targets = [{ platform: "peatix", platformEventId: String(campaign.event_key).replace(/^peatix-/, "") }];
+    for (const urlRow of urlsByEvent.get(campaign.event_key) || []) {
+      if (urlRow.medium !== "kokuchpro") continue;
+      const key = parseKokuchproKey(urlRow.event_url);
+      if (key) targets.push({ platform: "kokuchpro", platformEventId: key });
+    }
+    register(campaign.title, campaign.start_at, targets);
+  }
+
+  // (b) cross_post_queue_*.json: 8/20以降の投稿分を含む、PeatixのイベントURL
+  //     (Wonder+/Jua Party両アカウント分)。こくちーずのURLは記録されていない。
+  let queueEvents = 0;
+  for (const file of fs.readdirSync(POSTING_TOOL_DIR).filter((f) => /^cross_post_queue_.*\.json$/.test(f))) {
+    const items = JSON.parse(fs.readFileSync(path.join(POSTING_TOOL_DIR, file), "utf8"));
+    for (const item of Array.isArray(items) ? items : []) {
+      const match = String(item.published_url || "").match(/peatix\.com\/event\/(\d+)/);
+      if (!match) continue;
+      queueEvents += 1;
+      register(item.title, item.start_at, [{ platform: "peatix", platformEventId: match[1] }]);
     }
   }
 
@@ -107,7 +123,7 @@ async function main() {
     await replacePlatformEventMapRows(sheetId, [...byKey.values()]);
   }
 
-  console.log(`自動投稿ツールのイベント: ${campaigns.length}件`);
+  console.log(`自動投稿ツールのイベント: DB ${campaigns.length}件 + 投稿キュー ${queueEvents}件`);
   console.log(`  公式イベントに特定できた: ${mappedEvents}件`);
   console.log(`  PlatformEventMap 追加: ${addedRows}行 / 更新: ${updatedRows}行`);
   console.log(`  特定できず保留(ダッシュボードの「未紐づけ」で確定): ${unmatched.length}件`);
