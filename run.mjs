@@ -10,12 +10,14 @@ import {
   readEventMaster,
   readOfficialEvents,
   readPlatformEventMap,
+  readPostedEvents,
   readSheetAsObjects,
   replaceRawRows,
   replaceUnmappedRows,
   resolveCanonicalEventId,
   writeSummary
 } from "./lib/sheetsClient.mjs";
+import { resolvePostedEvents } from "./lib/postedEvents.mjs";
 import * as evemado from "./scrapers/evemado.mjs";
 import * as googleForms from "./scrapers/googleForms.mjs";
 import * as jimoty from "./scrapers/jimoty.mjs";
@@ -134,6 +136,20 @@ async function main() {
   const newEventMasterRows = [];
   const newMapRows = [];
   const nowIso = new Date().toISOString();
+
+  // 自動投稿ツールが投稿時に記録した媒体イベントID(PostedEvents)を、行の解決より
+  // 前に取り込む。推測ではなく「このIDのイベントを、この日時に投稿した」という
+  // 確かな記録なので、auto(自動推測)より優先して公式イベントに紐づける。
+  const postedAdded = resolvePostedEvents({
+    postedRows: await readPostedEvents(sheetId),
+    officialEvents,
+    mapByKey,
+    nowIso
+  });
+  newMapRows.push(...postedAdded);
+  if (postedAdded.length > 0) {
+    console.log(`自動投稿ツールの投稿記録から${postedAdded.length}件を公式イベントに紐づけました。`);
+  }
 
   function pinToPlatformEventMap(row, canonicalEventId, canonicalEventName) {
     if (!row.platformEventId) return;
