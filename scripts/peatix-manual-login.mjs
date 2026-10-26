@@ -1,5 +1,4 @@
-import { chromium } from "playwright";
-import { storageStatePath } from "../lib/browser.mjs";
+import { storageStatePath, launchProfileContext } from "../lib/browser.mjs";
 
 // Peatixはパスワードのみでの自動ログインを受け付けず、毎回メール確認
 // (ワンタイムコード)を要求する仕様のため、GitHub Actions側からの
@@ -32,9 +31,10 @@ if (!accountLabel) {
 const statePath = storageStatePath(`peatix-${accountLabel}`);
 
 async function main() {
-  const browser = await chromium.launch({ headless: false });
-  const context = await browser.newContext({ locale: "ja-JP" });
-  const page = await context.newPage();
+  // 専用のChromeプロファイルで開く。ここでログインした状態が、以降の自動取得でも
+  // そのまま使われる(普段使いのChromeとは別のプロファイル)。
+  const context = await launchProfileContext(`peatix-${accountLabel}`, { headless: false });
+  const page = context.pages()[0] || (await context.newPage());
   await page.goto("https://peatix.com/signin");
 
   console.log("");
@@ -75,7 +75,7 @@ async function main() {
   console.log(`ログイン済みであることを確認し、保存しました: ${statePath}`);
   console.log("このファイルの中身をコピーして、GitHub Secretsに登録してください。");
 
-  await browser.close();
+  await context.close();
   process.exit(0);
 }
 

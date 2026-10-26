@@ -4,3 +4,4 @@ node_modules/
 storage-state/
 service-account.json
 logs/
+browser-profiles/

@@ -2,7 +2,7 @@ import { reportSource } from "../lib/sourceStatus.mjs";
 import fs from "node:fs";
 import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
-import { withBrowser, storageStatePath } from "../lib/browser.mjs";
+import { withBrowser, storageStatePath, launchProfileContext } from "../lib/browser.mjs";
 import { decodeUtf16Le, findColumn, tableFromCsv } from "../lib/csv.mjs";
 
 // パスワードログインは廃止したため(下記scrapeAccount参照)、認証情報は
@@ -358,17 +358,12 @@ function isAuthenticatedDashboardUrl(url) {
 // 変化だけを受動的に監視する。
 export async function ensureLoggedIn(accountLabel, { onStatus, timeoutMs = 15 * 60 * 1000 } = {}) {
   const statePath = storageStatePath(`peatix-${accountLabel}`);
-  const hasSavedState = fs.existsSync(statePath);
-  const browser = await chromium.launch({ headless: false });
+  // 専用のChromeプロファイルで開く(ログインしたままの状態が次回以降も残る)。
+  const context = await launchProfileContext(`peatix-${accountLabel}`, { headless: false });
   try {
-    const context = await browser.newContext(
-      hasSavedState ? { storageState: statePath, locale: "ja-JP" } : { locale: "ja-JP" }
-    );
-    const page = await context.newPage();
+    const page = context.pages()[0] || (await context.newPage());
     const dashboardUrl = await getDashboardUrl(page);
     if (isAuthenticatedDashboardUrl(dashboardUrl)) {
-      // まだ有効でも、Cloudflareのボット対策Cookie(__cf_bm)は寿命が短いため
-      // 開いたついでに保存し直しておく(headedで開くだけで更新される)。
       await context.storageState({ path: statePath });
       return { loggedIn: true, wasAlreadyValid: true };
     }
@@ -383,7 +378,7 @@ export async function ensureLoggedIn(accountLabel, { onStatus, timeoutMs = 15 * 
     }
     return { loggedIn: false, wasAlreadyValid: false, timedOut: true };
   } finally {
-    await browser.close();
+    await context.close();
   }
 }
 
@@ -427,7 +422,7 @@ async function scrapeAccount(account) {
       }
     }
     return reservations;
-  });
+  }, { persistent: true });
 }
 
 export async function collect() {
