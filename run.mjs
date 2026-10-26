@@ -16,9 +16,11 @@ import {
   replaceRawRows,
   replaceUnmappedRows,
   resolveCanonicalEventId,
+  updateSourceStatus,
   writeSummary
 } from "./lib/sheetsClient.mjs";
 import { resolvePostedEvents } from "./lib/postedEvents.mjs";
+import { getSourceReports, reportSource } from "./lib/sourceStatus.mjs";
 import * as evemado from "./scrapers/evemado.mjs";
 import * as googleForms from "./scrapers/googleForms.mjs";
 import * as jimoty from "./scrapers/jimoty.mjs";
@@ -64,25 +66,33 @@ function parseOnlyArg() {
   return arg.replace("--only=", "").split(",").map((s) => s.trim());
 }
 
+// 各媒体は互いに独立して並列に取得する。以前は1媒体ずつ順番に実行していたため、
+// 先頭の媒体が固まる(例: ログイン待ち)と、その上限時間の分だけ後続の媒体の
+// 取得が遅れ、GitHub Actionsの実行上限(25分)に達すると、どの媒体のデータも
+// 書き込まれないまま実行が打ち切られる構造だった。
 async function collectAll(targets) {
-  const rows = [];
-  for (const name of targets) {
-    const scraper = SCRAPERS[name];
-    if (!scraper) {
-      console.warn(`未知のスクレイパー指定です: ${name}`);
-      continue;
-    }
-    console.log(`--- collecting: ${name} ---`);
-    try {
-      const timeoutMs = SCRAPER_TIMEOUT_OVERRIDES_MS[name] || SCRAPER_TIMEOUT_MS;
-      const collected = await withTimeout(scraper.collect(), timeoutMs, name);
-      console.log(`${name}: ${collected.length}件`);
-      rows.push(...collected);
-    } catch (err) {
-      console.error(`${name} の取得に失敗しました:`, err);
-    }
-  }
-  return rows;
+  const results = await Promise.all(
+    targets.map(async (name) => {
+      const scraper = SCRAPERS[name];
+      if (!scraper) {
+        console.warn(`未知のスクレイパー指定です: ${name}`);
+        return [];
+      }
+      console.log(`--- collecting: ${name} ---`);
+      try {
+        const timeoutMs = SCRAPER_TIMEOUT_OVERRIDES_MS[name] || SCRAPER_TIMEOUT_MS;
+        const collected = await withTimeout(scraper.collect(), timeoutMs, name);
+        console.log(`${name}: ${collected.length}件`);
+        return collected;
+      } catch (err) {
+        console.error(`${name} の取得に失敗しました:`, err);
+        // 媒体全体の失敗(タイムアウト等)。アカウント単位で報告済みでない場合に備える。
+        reportSource(name, "(全体)", { ok: false, message: err.message });
+        return [];
+      }
+    })
+  );
+  return results.flat();
 }
 
 function buildSummary(resolvedRows) {
@@ -279,6 +289,37 @@ async function main() {
 
   const finalRaw = [...keptRaw, ...resolved, ...unresolvedRaw];
   const finalUnmapped = [...keptUnmapped, ...unmapped];
+
+  // 媒体ごとの取得状況をダッシュボードに表示するため SourceStatus に書き出す。
+  // 「0件取得」と「取得失敗」を区別できるよう、各スクレイパーの報告(reportSource)
+  // と今回の取得件数を突き合わせる。書き込み失敗で本処理を止めない。
+  try {
+    const freshCounts = new Map();
+    for (const row of rawRows) freshCounts.set(accountKey(row), (freshCounts.get(accountKey(row)) || 0) + 1);
+    const runner = process.env.GITHUB_ACTIONS ? "GitHub" : "このPC";
+    const attemptedAt = new Date().toISOString();
+    const updates = getSourceReports().map((report) => ({
+      platform: report.platform,
+      account: report.account,
+      status: report.ok ? "ok" : "error",
+      lastAttemptAt: attemptedAt,
+      rowCount: freshCounts.get(`${report.platform}|||${report.account}`) || 0,
+      message: report.ok ? "" : report.message || "",
+      runner
+    }));
+    if (updates.length > 0) await updateSourceStatus(sheetId, updates);
+  } catch (err) {
+    console.warn("SourceStatus の更新に失敗しました(本処理は継続):", err.message);
+  }
+
+  // 安全装置: 既存データが急に4割以上消える書き込みは、取得側の不具合
+  // (ログイン切れ・サイト側ブロック等)の可能性が高いので中止する。
+  // 意図した大幅削減のときだけ FORCE_WRITE=1 で実行する。
+  if (existingRaw.length >= 50 && finalRaw.length < existingRaw.length * 0.6 && process.env.FORCE_WRITE !== "1") {
+    throw new Error(
+      `RawDataの書き込みを中止しました: 既存${existingRaw.length}行 → 新${finalRaw.length}行に急減します。取得失敗の可能性があります(意図した場合は FORCE_WRITE=1)。`
+    );
+  }
 
   await replaceRawRows(sheetId, finalRaw);
   await replaceUnmappedRows(sheetId, finalUnmapped);

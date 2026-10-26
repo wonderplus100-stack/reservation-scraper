@@ -1,3 +1,4 @@
+import { reportSource } from "../lib/sourceStatus.mjs";
 import fs from "node:fs";
 import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
@@ -440,8 +441,10 @@ export async function collect() {
     let reservations = [];
     try {
       reservations = await scrapeAccount(account);
+      reportSource("peatix", account.label, { ok: true });
     } catch (err) {
       console.error(`peatix(${account.label}) の取得に失敗しました:`, err.message);
+      reportSource("peatix", account.label, { ok: false, message: err.message });
       continue;
     }
     for (const reservation of reservations) {

@@ -1,3 +1,4 @@
+import { reportSource } from "../lib/sourceStatus.mjs";
 import { hiraganaToKatakana } from "../lib/normalizeName.mjs";
 import { fullSheetRange, readSheetValues } from "../lib/sheetsClient.mjs";
 
@@ -97,8 +98,18 @@ export async function collect() {
   const obtainedAt = new Date().toISOString();
 
   for (const account of accounts) {
-    const values = await readSheetValues(account.spreadsheetId, fullSheetRange(account.sheetName));
-    const reservations = extractReservations(values, account);
+    // 1つのフォームの失敗(シート名変更など)で、もう一方のフォームまで取得できなく
+    // ならないよう、アカウントごとに分けて失敗を報告する。
+    let reservations;
+    try {
+      const values = await readSheetValues(account.spreadsheetId, fullSheetRange(account.sheetName));
+      reservations = extractReservations(values, account);
+      reportSource("googleForms", account.label, { ok: true });
+    } catch (err) {
+      console.error(`googleForms(${account.label}) の取得に失敗しました:`, err.message);
+      reportSource("googleForms", account.label, { ok: false, message: err.message });
+      continue;
+    }
     for (const reservation of reservations) {
       rows.push({
         platform: "googleForms",

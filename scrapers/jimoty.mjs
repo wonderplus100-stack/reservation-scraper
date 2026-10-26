@@ -1,3 +1,4 @@
+import { reportSource } from "../lib/sourceStatus.mjs";
 import { withBrowser } from "../lib/browser.mjs";
 
 // ジモティーには他媒体(Peatix/こくちーずPRO/つなげーと)のような「参加者一覧」
@@ -164,8 +165,10 @@ export async function collect() {
     let reservations = [];
     try {
       reservations = await scrapeAccount(account);
+      reportSource("jimoty", account.label, { ok: true });
     } catch (err) {
       console.error(`jimoty(${account.label}) の取得に失敗しました:`, err.message);
+      reportSource("jimoty", account.label, { ok: false, message: err.message });
       continue;
     }
     for (const reservation of reservations) {

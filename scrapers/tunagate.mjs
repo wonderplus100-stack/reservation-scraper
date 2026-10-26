@@ -1,3 +1,4 @@
+import { reportSource } from "../lib/sourceStatus.mjs";
 import { withBrowser } from "../lib/browser.mjs";
 
 // 重要な制約(実アカウントで確認済み):
@@ -140,8 +141,10 @@ export async function collect() {
     let reservations = [];
     try {
       reservations = await scrapeAccount(account);
+      reportSource("tunagate", account.label, { ok: true });
     } catch (err) {
       console.error(`tunagate(${account.label}) の取得に失敗しました:`, err.message);
+      reportSource("tunagate", account.label, { ok: false, message: err.message });
       continue;
     }
     for (const reservation of reservations) {

@@ -72,7 +72,7 @@ jobs:
         # スケジューラ)専用で実行し、ここでは対象外にする。除外しないと、
         # GH Actions側は必ずログイン失敗し、その「今回は対象だが0件」という
         # 結果でRawData上の既存データを毎回上書き消去してしまう不具合があった。
-        # ジモティーはメール+パスワードのみでログインできるためGH Actionsで
-        # そのまま実行できる。イベマド(evemado.jp)はログイン不要のWordPress
-        # REST APIから取得するだけなので同様にGH Actionsでそのまま実行できる。
-        run: node run.mjs --only=googleForms,kokuchpro,jimoty,evemado
+        # ジモティー・イベマドはメール認証は不要だが、GitHub ActionsのIPからは
+        # イベマドが403で拒否し、ジモティーも0件しか返さないため、こちらでは
+        # 実行せずローカルPC(scripts/run-peatix-scheduled.cmd)で取得する。
+        run: node run.mjs --only=googleForms,kokuchpro

@@ -1,3 +1,4 @@
+import { reportSource } from "../lib/sourceStatus.mjs";
 import { readFile } from "node:fs/promises";
 import { submitForm, withBrowser } from "../lib/browser.mjs";
 import { generateTotpCode } from "../lib/totp.mjs";
@@ -290,7 +291,15 @@ export async function collect() {
   const rows = [];
 
   for (const account of accounts) {
-    const reservations = await scrapeAccount(account);
+    let reservations;
+    try {
+      reservations = await scrapeAccount(account);
+      reportSource("kokuchpro", account.label, { ok: true });
+    } catch (err) {
+      console.error(`kokuchpro(${account.label}) の取得に失敗しました:`, err.message);
+      reportSource("kokuchpro", account.label, { ok: false, message: err.message });
+      continue;
+    }
     for (const reservation of reservations) {
       rows.push({
         platform: "kokuchpro",

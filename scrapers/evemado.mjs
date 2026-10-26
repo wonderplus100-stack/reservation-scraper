@@ -1,3 +1,5 @@
+import { reportSource } from "../lib/sourceStatus.mjs";
+
 // イベマド(evemado.jp、Wonder+自社の予約ポータルサイト)の予約データを取得する。
 //
 // 管理画面(wp-admin)にログインして画面を操作する必要は無い。実アカウントで
@@ -35,7 +37,17 @@ async function fetchAllReservations() {
 
 export async function collect() {
   const obtainedAt = new Date().toISOString();
-  const posts = await fetchAllReservations();
+  let posts;
+  try {
+    posts = await fetchAllReservations();
+    reportSource("evemado", "evemado.jp", { ok: true });
+  } catch (err) {
+    // GitHub Actionsのネットワークからは403で拒否される(サイト側のセキュリティ)
+    // ことがあるため、ローカルPCでの定期実行で取得する。
+    console.error("evemado の取得に失敗しました:", err.message);
+    reportSource("evemado", "evemado.jp", { ok: false, message: err.message });
+    return [];
+  }
 
   const rows = [];
   for (const post of posts) {
