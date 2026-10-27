@@ -18,9 +18,9 @@ const EVENT_ADMIN_URL_RE = /\/admin\/e-([0-9a-f]+)\/d-(\d+)\//;
 
 function accountsFromEnv() {
   const accounts = [];
-  // Phase 2: wonderplus100@gmail.com のみを対象にする(ユーザー指示)。
-  // 2つ目のアカウントはPhase 5で有効化する。
-  for (const index of [1]) {
+  // KOKUCHPRO_1〜5 のうち、メールとパスワードが設定されているものを対象にする。
+  // アカウントを増やすときは .env(とGitHubのVariables/Secrets)に番号を進めて追記するだけでよい。
+  for (const index of [1, 2, 3, 4, 5]) {
     const email = process.env[`KOKUCHPRO_${index}_EMAIL`];
     const password = process.env[`KOKUCHPRO_${index}_PASSWORD`];
     if (!email || !password) continue;

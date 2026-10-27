@@ -20,7 +20,8 @@ import { fullSheetRange, readSheetValues } from "../lib/sheetsClient.mjs";
 // 該当しても両方登録されるだけで安全側に倒れる)。
 function accountsFromEnv() {
   const accounts = [];
-  for (const index of [1, 2]) {
+  // FORM_1〜6 のうち、スプレッドシートIDが設定されているものを対象にする。
+  for (const index of [1, 2, 3, 4, 5, 6]) {
     const spreadsheetId = process.env[`FORM_${index}_SPREADSHEET_ID`];
     if (!spreadsheetId) continue;
     accounts.push({
