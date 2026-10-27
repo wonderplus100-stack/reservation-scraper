@@ -27,8 +27,9 @@ import * as jimoty from "./scrapers/jimoty.mjs";
 import * as kokuchpro from "./scrapers/kokuchpro.mjs";
 import * as peatix from "./scrapers/peatix.mjs";
 import * as tunagate from "./scrapers/tunagate.mjs";
+import * as wpBookings from "./scrapers/wpBookings.mjs";
 
-const SCRAPERS = { evemado, googleForms, jimoty, kokuchpro, peatix, tunagate };
+const SCRAPERS = { evemado, googleForms, jimoty, kokuchpro, peatix, tunagate, wpBookings };
 
 // 1媒体あたりの上限時間。こくちーずPRO等がCI環境でハングし、
 // GitHub Actionsのジョブ上限を使い切って強制キャンセルされる事故が
@@ -42,6 +43,8 @@ const SCRAPER_TIMEOUT_OVERRIDES_MS = {
   // 完走しない)、イベントごとの開催回数(セッション数)にもばらつきが
   // 大きいため、余裕を持って15分の上限にする。
   kokuchpro: 15 * 60 * 1000,
+  // 公式サイト管理画面の予約一覧は1ページ300件のHTMLを5ページ読む(1ページ10秒前後)。
+  wpBookings: 10 * 60 * 1000,
   // Peatixは「終了」タブだけで1,000件超のイベント履歴があり、申込み数>0の
   // イベントだけに絞ってもなお実測で数百件規模になる(1アカウントあたり)。
   // 1件ずつ参加者一覧ページへ遷移してCSVをダウンロードする都合上、
