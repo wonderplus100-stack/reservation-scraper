@@ -30,6 +30,11 @@ function accountsFromEnv() {
       sheetName: process.env[`FORM_${index}_SHEET_NAME`] || "フォームの回答 1",
       namePattern: process.env[`FORM_${index}_NAME_COLUMN_PATTERN`] || "お名前",
       eventPattern: process.env[`FORM_${index}_EVENT_COLUMN_PATTERN`] || "参加希望日",
+      // 「開催日,イベント名,開催時間」のように複数の列見出しをカンマ区切りで指定すると、
+      // それらの値を連結した文字列を1件のイベント名として扱う(LP予約一覧のように
+      // イベントが日付・名称・時間の別列に分かれているシート用)。未設定なら従来どおり。
+      eventComposeColumns: (process.env[`FORM_${index}_EVENT_COMPOSE_COLUMNS`] || "")
+        .split(",").map((s) => s.trim()).filter(Boolean),
       // 担当者/紹介者列は、フォームによって列見出しの文言も有無も異なるため
       // アカウントごとに環境変数で指定できるようにする(未設定なら集計しない)。
       referrerPattern: process.env[`FORM_${index}_REFERRER_COLUMN_PATTERN`] || ""
@@ -38,7 +43,19 @@ function accountsFromEnv() {
   return accounts;
 }
 
-function extractReservations(values, { namePattern, eventPattern, referrerPattern }) {
+// 日付("2026/09/23" や "7/27")は "M/D" に揃える。イベント名の先頭に既に同じ日付が
+// 入っている古い行("7/27 前橋 Wonder+ ...")では、日付を二重にしない。
+function composeEventName([date, title, time]) {
+  const md = String(date || "").match(/(?:\d{4}[\/-])?(\d{1,2})[\/-](\d{1,2})/);
+  const dateText = md ? `${Number(md[1])}/${Number(md[2])}` : String(date || "");
+  const parts = [];
+  if (!title || !title.startsWith(dateText)) parts.push(dateText);
+  if (title) parts.push(title);
+  if (time && !(title || "").includes(time)) parts.push(time);
+  return parts.filter(Boolean).join(" ").trim();
+}
+
+function extractReservations(values, { namePattern, eventPattern, referrerPattern, eventComposeColumns = [] }) {
   const [headerRow, ...dataRows] = values;
   if (!headerRow) return [];
 
@@ -64,6 +81,13 @@ function extractReservations(values, { namePattern, eventPattern, referrerPatter
     .map((header, index) => ({ header: String(header || "").trim(), index }))
     .filter(({ header }) => header.includes(eventPattern));
 
+  const composeIndexes = eventComposeColumns.map((name) =>
+    headerRow.findIndex((header) => String(header || "").trim() === name)
+  );
+  if (composeIndexes.some((i) => i < 0)) {
+    throw new Error(`イベント名を組み立てる列が見つかりません: ${eventComposeColumns.join(",")}`);
+  }
+
   const results = [];
   for (const row of dataRows) {
     const reservationName = nameColumnIndexes
@@ -77,6 +101,14 @@ function extractReservations(values, { namePattern, eventPattern, referrerPatter
     const referrerName = referrerColumnIndexes
       .map((i) => String(row[i] || "").trim())
       .find(Boolean) || "";
+
+    if (composeIndexes.length > 0) {
+      const rawEventName = composeEventName(composeIndexes.map((i) => String(row[i] || "").trim()));
+      if (rawEventName) {
+        results.push({ reservationName, rawEventName, readingKatakana: hiraganaToKatakana(readingKana), referrerName });
+      }
+      continue;
+    }
 
     for (const { header, index } of eventColumns) {
       const value = String(row[index] || "").trim();
