@@ -11,6 +11,7 @@ import { withBrowser } from "../lib/browser.mjs";
 // 一覧の列: 予約(#ID・タイトル) / ステータス(予約中・キャンセル済み) / イベント /
 // 開催日時 / お客様 / 連絡先 / 人数 / 受付日。1ページ300件表示になっており、
 // ゴミ箱は件数に含まれない。キャンセル済みは集計対象外(ユーザー指示)。
+// 人数が2人以上の予約は、同行者ぶんも人数に数える(ユーザー指示)。
 const SITE_ORIGIN = "https://wonderplus.ne.jp";
 const LIST_PATH = "/wp-admin/edit.php?post_type=booking";
 const PROFILE_LABEL = "wonderplus-site";
@@ -68,7 +69,8 @@ async function readAllPages(page) {
           status: text(tr, "status"),
           event: text(tr, "event"),
           when: (tr.querySelector("td.column-event_when")?.textContent || "").trim(),
-          customer: text(tr, "customer")
+          customer: text(tr, "customer"),
+          attendees: text(tr, "attendees")
         });
       }
       return { loginRequired: false, rows: out };
@@ -105,6 +107,18 @@ export async function collect() {
       const rawEventName = composeEventName(booking.event, booking.when);
       if (!reservationName || !rawEventName) continue;
       rows.push({ platform: "wpBookings", account: account.label, rawEventName, reservationName, obtainedAt });
+      // 人数が2人以上の予約は、同行者の氏名が分からないため「氏名(同行1)」のような
+      // 仮の行を足して、予約人数ぶんが集計(氏名ごとのユニーク数)に入るようにする。
+      const attendees = Math.min(Math.max(parseInt(booking.attendees, 10) || 1, 1), 20);
+      for (let companion = 1; companion < attendees; companion += 1) {
+        rows.push({
+          platform: "wpBookings",
+          account: account.label,
+          rawEventName,
+          reservationName: `${reservationName}(同行${companion})`,
+          obtainedAt
+        });
+      }
     }
     reportSource("wpBookings", account.label, { ok: true });
   }
