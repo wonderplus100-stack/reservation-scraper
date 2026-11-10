@@ -5,3 +5,6 @@ storage-state/
 service-account.json
 logs/
 browser-profiles/
+
+# 個人情報を含む作業ファイル(whitekey入力プラン等)
+data/

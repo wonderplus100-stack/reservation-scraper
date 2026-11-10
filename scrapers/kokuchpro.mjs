@@ -242,6 +242,7 @@ async function downloadReservationNames(page, eventHash, dateId) {
   const ticketColumn = findColumn(headers, ["チケット名", "チケット", "参加区分", "参加種別"]);
   const amountColumn = findColumn(headers, ["参加費", "金額", "料金", "支払金額", "価格"]);
   const genderColumn = findColumn(headers, ["性別"]);
+  const quantityColumn = findColumn(headers, ["枚数"]);
   if (!diagnosedHeaders) {
     diagnosedHeaders = true;
     console.error(`[kokuchpro診断] CSV列: ${headers.join(" / ")}`);
@@ -254,7 +255,8 @@ async function downloadReservationNames(page, eventHash, dateId) {
       status: cell(row, statusColumn),
       ticketName: cell(row, ticketColumn),
       amount: cell(row, amountColumn).replace(/[^\d]/g, ""),
-      gender: cell(row, genderColumn)
+      gender: cell(row, genderColumn),
+      quantity: cell(row, quantityColumn).replace(/[^\d]/g, "")
     }))
     .filter((entry) => entry.name);
 }
@@ -306,7 +308,8 @@ async function scrapeAccount(account) {
             bookingStatus: entry.status,
             ticketName: entry.ticketName,
             amount: entry.amount,
-            genderHint: entry.gender
+            genderHint: entry.gender,
+            quantity: entry.quantity
           });
         }
       }
@@ -342,6 +345,7 @@ export async function collect() {
         ticketName: reservation.ticketName,
         amount: reservation.amount,
         genderHint: reservation.genderHint,
+        quantity: reservation.quantity,
         obtainedAt
       });
     }
