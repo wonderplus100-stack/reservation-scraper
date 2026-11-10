@@ -199,6 +199,8 @@ async function getEventTitle(page) {
 }
 
 // 参加者管理ページで「参加者名簿のダウンロード」ボタンを押し、CSVを取得して氏名を抽出する。
+let diagnosedHeaders = false;
+
 async function downloadReservationNames(page, eventHash, dateId) {
   await page.goto(`https://www.kokuchpro.com/admin/participant/e-${eventHash}/d-${dateId}/`, {
     waitUntil: "domcontentloaded"
@@ -233,8 +235,30 @@ async function downloadReservationNames(page, eventHash, dateId) {
     console.warn(`こくちーずPRO: 氏名列が見つかりません(見つかった列: ${headers.join(", ")})`);
     return [];
   }
-  return rows.map((row) => String(row[nameColumn] || "").trim()).filter(Boolean);
+  // 自動入力(whitekey受付登録)に必要な付随情報。列名は実CSVに合わせて部分一致で探す。
+  // 見つからない列は空のままにし、診断ログで実際の列名を確認できるようにする。
+  const bookingNoColumn = findColumn(headers, ["申込番号", "受付番号"]);
+  const statusColumn = findColumn(headers, ["申込状態", "ステータス", "状態"]);
+  const ticketColumn = findColumn(headers, ["チケット名", "チケット", "参加区分", "参加種別"]);
+  const amountColumn = findColumn(headers, ["参加費", "金額", "料金", "支払金額", "価格"]);
+  const genderColumn = findColumn(headers, ["性別"]);
+  if (!diagnosedHeaders) {
+    diagnosedHeaders = true;
+    console.error(`[kokuchpro診断] CSV列: ${headers.join(" / ")}`);
+  }
+  const cell = (row, column) => (column ? String(row[column] || "").trim() : "");
+  return rows
+    .map((row) => ({
+      name: String(row[nameColumn] || "").trim(),
+      bookingNo: cell(row, bookingNoColumn),
+      status: cell(row, statusColumn),
+      ticketName: cell(row, ticketColumn),
+      amount: cell(row, amountColumn).replace(/[^\d]/g, ""),
+      gender: cell(row, genderColumn)
+    }))
+    .filter((entry) => entry.name);
 }
+
 
 // こくちーずPROはGitHub Actionsからのアクセスで断続的な接続不調
 // (page.goto自体の失敗/フォーム要素が時間内に現れない等、症状が
@@ -270,13 +294,19 @@ async function scrapeAccount(account) {
 
       for (const session of sessions) {
         const names = await downloadReservationNames(page, session.eventHash, session.dateId);
-        for (const reservationName of names) {
+        for (const entry of names) {
           reservations.push({
             rawEventName: `${eventTitle}｜${session.sessionLabel}`,
             // 自動投稿ツールが記録する公開URL(/event/{ハッシュ}/{開催ID}/)と
             // 同じ「ハッシュ/開催ID」形式のキー。タイトルが変わっても不変。
             platformEventId: `${session.eventHash}/${session.dateId}`,
-            reservationName
+            reservationName: entry.name,
+            // 同じ申込を二重に入力しないためのキー(申込番号が無い場合は氏名で代用)。
+            bookingKey: `kokuchpro|${session.eventHash}/${session.dateId}|${entry.bookingNo || entry.name}`,
+            bookingStatus: entry.status,
+            ticketName: entry.ticketName,
+            amount: entry.amount,
+            genderHint: entry.gender
           });
         }
       }
@@ -307,6 +337,11 @@ export async function collect() {
         rawEventName: reservation.rawEventName,
         platformEventId: reservation.platformEventId,
         reservationName: reservation.reservationName,
+        bookingKey: reservation.bookingKey,
+        bookingStatus: reservation.bookingStatus,
+        ticketName: reservation.ticketName,
+        amount: reservation.amount,
+        genderHint: reservation.genderHint,
         obtainedAt
       });
     }
