@@ -40,6 +40,46 @@ async function loginRequired(page) {
   return /wp-login\.php|[?&]redirect_to=|reauth=1/.test(page.url()) || (await page.locator("#loginform").count()) > 0;
 }
 
+// 「参加者名簿(受付用)」は読み取り専用の画面で、イベントごとに 予約番号 / お名前 /
+// フリガナ / 人数 / チケット(「男性 ¥1,700」のように性別と金額) / ステータス が出る。
+// whitekeyへの自動入力で、お客様自身が入力したフリガナ・性別・金額を使うために、
+// これから開催されるイベントの分だけ読む(サイトのデータは一切変更しない)。
+const ROSTER_URL = `${SITE_ORIGIN}/wp-admin/edit.php?post_type=booking&page=wonder-booking-roster`;
+const ROSTER_LOOKAHEAD_DAYS = 150;
+
+async function readRosters(page) {
+  await page.goto(ROSTER_URL, { waitUntil: "domcontentloaded" });
+  const options = await page.evaluate(() =>
+    [...document.querySelectorAll("select[name=event_id] option")].map((o) => [o.value, o.text])
+  );
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const limit = new Date(today.getTime() + ROSTER_LOOKAHEAD_DAYS * 86400000);
+  const eventIds = options
+    .filter(([value, label]) => {
+      const m = label.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (value === "0" || !m) return false;
+      const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      return date >= today && date <= limit;
+    })
+    .map(([value]) => value);
+
+  const byNumber = new Map();
+  for (const eventId of eventIds) {
+    await page.goto(`${ROSTER_URL}&event_id=${eventId}`, { waitUntil: "domcontentloaded" });
+    const rows = await page.evaluate(() =>
+      [...document.querySelectorAll(".wrap table tbody tr")].map((tr) =>
+        [...tr.children].map((td) => td.textContent.replace(/\s+/g, " ").trim())
+      )
+    );
+    for (const [number, , reading, , ticket] of rows) {
+      const key = String(number || "").replace(/^#/, "");
+      if (key) byNumber.set(key, { reading: reading || "", ticket: ticket || "" });
+    }
+  }
+  return byNumber;
+}
+
 async function readAllPages(page) {
   await page.goto(`${SITE_ORIGIN}${LIST_PATH}`, { waitUntil: "domcontentloaded" });
   if (await loginRequired(page)) {
@@ -66,6 +106,7 @@ async function readAllPages(page) {
         if (!tr.querySelector("td.column-status")) continue;
         out.push({
           id: tr.id,
+          number: ((tr.querySelector("a.row-title")?.textContent || "").trim().match(/^#(\d+)/) || [])[1] || "",
           status: text(tr, "status"),
           event: text(tr, "event"),
           when: (tr.querySelector("td.column-event_when")?.textContent || "").trim(),
@@ -80,7 +121,14 @@ async function readAllPages(page) {
     }
     rows.push(...pageRows.rows);
   }
-  return rows;
+  // 名簿の読み取りに失敗しても、予約の人数集計(従来の機能)は止めない。
+  let rosters = new Map();
+  try {
+    rosters = await readRosters(page);
+  } catch (err) {
+    console.error(`wpBookings: 参加者名簿の読み取りに失敗しました(ふりがな・チケットなし): ${err.message}`);
+  }
+  return { rows, rosters };
 }
 
 export async function collect() {
@@ -90,8 +138,9 @@ export async function collect() {
 
   for (const account of accounts) {
     let bookings;
+    let rosters = new Map();
     try {
-      bookings = await withBrowser(PROFILE_LABEL, (page) => readAllPages(page), { persistent: true });
+      ({ rows: bookings, rosters } = await withBrowser(PROFILE_LABEL, (page) => readAllPages(page), { persistent: true }));
     } catch (err) {
       console.error(`wpBookings(${account.label}) の取得に失敗しました:`, err.message);
       reportSource("wpBookings", account.label, { ok: false, message: err.message });
@@ -106,7 +155,20 @@ export async function collect() {
       const reservationName = cleanName(booking.customer);
       const rawEventName = composeEventName(booking.event, booking.when);
       if (!reservationName || !rawEventName) continue;
-      rows.push({ platform: "wpBookings", account: account.label, rawEventName, reservationName, obtainedAt });
+      const roster = rosters.get(booking.number) || { reading: "", ticket: "" };
+      const gender = /女性/.test(roster.ticket) ? "女性" : /男性/.test(roster.ticket) ? "男性" : "";
+      const detail = {
+        readingKatakana: roster.reading,
+        ticketName: roster.ticket,
+        amount: (roster.ticket.match(/[¥￥]\s*([\d,]+)/) || [])[1]?.replace(/,/g, "") || "",
+        genderHint: gender,
+        bookingStatus: booking.status
+      };
+      rows.push({
+        platform: "wpBookings", account: account.label, rawEventName, reservationName, obtainedAt,
+        bookingKey: `wpBookings|${booking.number || booking.id}`,
+        ...detail
+      });
       // 人数が2人以上の予約は、同行者の氏名が分からないため「氏名(同行1)」のような
       // 仮の行を足して、予約人数ぶんが集計(氏名ごとのユニーク数)に入るようにする。
       const attendees = Math.min(Math.max(parseInt(booking.attendees, 10) || 1, 1), 20);
@@ -116,7 +178,9 @@ export async function collect() {
           account: account.label,
           rawEventName,
           reservationName: `${reservationName}(同行${companion})`,
-          obtainedAt
+          obtainedAt,
+          bookingKey: `wpBookings|${booking.number || booking.id}|c${companion}`,
+          ...detail
         });
       }
     }

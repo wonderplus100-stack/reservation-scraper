@@ -2,6 +2,7 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { OFFICIAL_EVENTS_SHEET, RAW_DATA_SHEET, readSheetAsObjects } from "../lib/sheetsClient.mjs";
+import { fetchEventPrices } from "../lib/eventPrices.mjs";
 import { toWhitekeyName } from "../lib/whitekeyName.mjs";
 
 // whitekey(会員・パーティー管理システム)の「パーティー受付登録」に入れる内容を、
@@ -119,6 +120,10 @@ async function main() {
     return { mei: String(next), meiNumber: next };
   }
 
+  // 媒体に金額が無い予約(公式サイト等)は、公式イベントページの「男性/女性」の参加費を使う。
+  const needPrice = [...groups.values()].filter((g) => g.row && !String(g.row.amount || "").trim()).map((g) => g.event.canonicalEventId);
+  const eventPrices = needPrice.length > 0 ? await fetchEventPrices(new Set(needPrice)) : new Map();
+
   const entries = [];
   for (const group of groups.values()) {
     if (!group.row) continue; // 代表者の行が無い(同行者だけ)ことは通常ない
@@ -127,13 +132,22 @@ async function main() {
       skipped.entered += 1;
       continue;
     }
-    const name = await toWhitekeyName(group.baseName);
+    const name = await toWhitekeyName(group.baseName, group.row.readingKatakana);
     const reasons = [];
     if (!name.sei) reasons.push("氏名を変換できない");
     const gender = judgeGender(group.row);
     if (gender.basis === "判断できず男性") reasons.push("性別を判断できず男性");
-    const amount = String(group.row.amount || "").trim();
-    if (!amount) reasons.push("金額が不明(0円で入力)");
+    let amount = String(group.row.amount || "").trim();
+    let feeBasis = amount ? "媒体の金額" : "";
+    if (!amount) {
+      const price = eventPrices.get(group.event.canonicalEventId);
+      if (price) {
+        amount = String(gender.sexkbn === "2" ? price.female : price.male);
+        feeBasis = "公式イベントページの参加費";
+      } else {
+        reasons.push("金額が不明(0円で入力)");
+      }
+    }
     const keiyu = KEIYU_BY_PLATFORM[group.row.platform] || KEIYU_OTHER;
 
     const people = [];
@@ -157,6 +171,7 @@ async function main() {
       sexkbn: gender.sexkbn,
       genderBasis: gender.basis,
       fee: amount ? Number(amount) : 0,
+      feeBasis,
       keiyu,
       tel: "00000000000",
       birth: { year: "2000", month: "1", day: "1", age: "25" },
@@ -168,12 +183,12 @@ async function main() {
   entries.sort((a, b) => Number(a.month) - Number(b.month) || Number(a.day) - Number(b.day) || a.time.localeCompare(b.time));
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(path.join(DATA_DIR, "whitekey-plan.json"), JSON.stringify(entries, null, 2));
-  const header = ["日付", "会場", "開始", "取得先", "きっかけ", "元の氏名", "入力する姓", "入力する名", "同行者", "性別", "性別の根拠", "料金", "要確認"];
+  const header = ["日付", "会場", "開始", "取得先", "きっかけ", "元の氏名", "入力する姓", "入力する名", "同行者", "性別", "性別の根拠", "料金", "料金の根拠", "要確認"];
   const lines = entries.map((e) =>
     [
       `${e.month}/${e.day}`, e.venue, e.time, e.platform, e.keiyu.label, e.originalName,
       e.people[0].sei, e.people[0].mei, e.people.length - 1,
-      e.sexkbn === "2" ? "女" : "男", e.genderBasis, e.fee, e.reasons.join(" / ")
+      e.sexkbn === "2" ? "女" : "男", e.genderBasis, e.fee, e.feeBasis, e.reasons.join(" / ")
     ].map(csvCell).join(",")
   );
   fs.writeFileSync(path.join(DATA_DIR, "whitekey-plan.csv"), "﻿" + [header.join(","), ...lines].join("\r\n"));
