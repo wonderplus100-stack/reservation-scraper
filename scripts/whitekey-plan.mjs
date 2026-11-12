@@ -135,6 +135,7 @@ async function main() {
     const name = await toWhitekeyName(group.baseName, group.row.readingKatakana);
     const reasons = [];
     if (!name.sei) reasons.push("氏名を変換できない");
+    if (name.splitGuessed) reasons.push("姓名の区切りを辞書で推定");
     const gender = judgeGender(group.row);
     if (gender.basis === "判断できず男性") reasons.push("性別を判断できず男性");
     let amount = String(group.row.amount || "").trim();
