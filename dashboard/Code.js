@@ -619,16 +619,18 @@ function fetchUpdateStatus() {
 function doGet(e) {
   // 公開ページ(GitHub Pages)からの取得用。?api=関数名&args=JSON配列&key=共有キー
   if (e && e.parameter && e.parameter.api) return apiResponse_(e.parameter.api, e.parameter.args, e.parameter.key);
-  if (!isAuthorized_()) {
-    return HtmlService.createHtmlOutput("<p>アクセス権がありません。</p>");
-  }
-  const template = HtmlService.createTemplateFromFile("Index");
-  const tab = e && e.parameter && e.parameter.tab ? String(e.parameter.tab) : "";
-  template.initialTab = ["upcoming", "past", "unlinked"].indexOf(tab) !== -1 ? tab : "upcoming";
-  return template
-    .evaluate()
-    .setTitle("Wonder+ 集客状況ダッシュボード")
-    .addMetaTag("viewport", "width=device-width, initial-scale=1");
+  // 旧画面(鍵なしで誰でも開けた画面)は止めた。氏名を含むデータを鍵なしで見られないようにし、
+  // 画面は新しい共有URL(鍵つき・GitHub Pages)に一本化している。
+  return HtmlService.createHtmlOutput(
+    '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+      "<title>Wonder+ 集客状況ダッシュボード</title></head>" +
+      '<body style="font-family:sans-serif;padding:24px;line-height:1.7">' +
+      "<h1 style=\"font-size:18px\">この画面は新しいURLに移りました</h1>" +
+      "<p>共有された<strong>鍵つきのURL</strong>(末尾が <code>#k=…</code>)から開いてください。</p>" +
+      '<p><a href="https://wonderplus100-stack.github.io/reservation-scraper/" target="_top">新しいダッシュボードを開く</a></p>' +
+      "<p style=\"color:#667085;font-size:13px\">鍵つきURLが分からない場合は、管理者にお問い合わせください。</p>" +
+      "</body></html>"
+  ).setTitle("Wonder+ 集客状況ダッシュボード");
 }
 
 // ---- 公開ページ(静的ページ)向けのJSON API ----
