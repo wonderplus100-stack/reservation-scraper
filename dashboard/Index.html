@@ -1,0 +1,668 @@
+<style>
+  :root { color-scheme: light; }
+  body { font-family: "Hiragino Sans", "Yu Gothic", sans-serif; margin: 0; padding: 16px; background: #f5f6f8; color: #1f2430; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .updated-at { font-size: 12px; color: #667085; margin-bottom: 16px; }
+  /* イベント選択: ネイティブのselectは1行のテキストしか出せず
+     「タイトル(N名)」が窮屈に詰め込まれて見づらかったため、タイトルを
+     上段、集客人数を目立つバッジとして分けて表示するカスタムUIにする。 */
+  .event-picker { position: relative; margin-bottom: 16px; }
+  .event-picker-trigger {
+    width: 100%; display: flex; align-items: center; gap: 10px;
+    background: #fff; border: 1px solid #d0d5dd; border-radius: 10px;
+    padding: 12px 14px; cursor: pointer; text-align: left; font-family: inherit;
+  }
+  .event-picker-trigger:disabled { cursor: default; opacity: 0.6; }
+  .event-picker-trigger-text { flex: 1; min-width: 0; }
+  .event-picker-trigger-title {
+    font-size: 14px; font-weight: 700; color: #101828; line-height: 1.4;
+    display: block; overflow-wrap: anywhere;
+  }
+  .event-picker-trigger-sub { font-size: 12px; color: #667085; margin-top: 2px; display: block; }
+  .event-picker-count {
+    font-size: 15px; font-weight: 800; color: #175cd3; background: #eaf1ff;
+    border-radius: 999px; padding: 5px 12px; white-space: nowrap; flex-shrink: 0;
+  }
+  .event-picker-arrow { color: #98a2b3; flex-shrink: 0; transition: transform 0.15s ease; }
+  .event-picker.open .event-picker-arrow { transform: rotate(180deg); }
+  .event-picker-list {
+    position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; right: 0;
+    max-height: 60vh; overflow-y: auto; background: #fff; border: 1px solid #d0d5dd;
+    border-radius: 10px; box-shadow: 0 10px 30px rgba(16, 24, 40, 0.16); padding: 6px;
+  }
+  .event-picker-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 10px 10px; border-radius: 8px; cursor: pointer;
+    background: none; border: none; text-align: left; font-family: inherit;
+  }
+  .event-picker-item:hover { background: #f5f8ff; }
+  .event-picker-item.active { background: #eaf1ff; }
+  .event-picker-item-title { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: #1f2430; line-height: 1.4; overflow-wrap: anywhere; }
+  .event-picker-item-count {
+    font-size: 13px; font-weight: 700; color: #175cd3; background: #eef4ff;
+    border-radius: 999px; padding: 3px 10px; white-space: nowrap; flex-shrink: 0;
+  }
+  .event-picker-empty { padding: 14px; color: #667085; font-size: 13px; text-align: center; }
+  .event-card { background: #fff; border: 1px solid #e3e6ea; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+  .event-name { font-size: 16px; font-weight: 700; margin: 0 0 10px; line-height: 1.4; }
+  .totals {
+    display: flex; align-items: baseline; gap: 8px;
+    background: #eaf1ff; border-radius: 10px; padding: 10px 14px; margin-bottom: 10px;
+  }
+  .totals .totals-label { font-size: 12.5px; color: #475467; }
+  .totals .totals-count { font-size: 26px; font-weight: 800; color: #175cd3; line-height: 1; }
+  .totals .totals-unit { font-size: 13px; color: #175cd3; font-weight: 600; }
+  .source-list { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: #475467; margin-bottom: 10px; }
+  .referrer-list span { color: #175cd3; }
+  .empty { color: #667085; font-size: 13px; }
+
+  /* 名前一覧: 2カラムではなく、1名=1行の縦一覧にする */
+  .name-list-head {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; color: #667085; margin-top: 10px; padding: 0 4px;
+  }
+  .name-list {
+    display: flex; flex-direction: column;
+    margin-top: 4px; max-height: 420px; overflow-y: auto;
+    border-top: 1px solid #eee;
+  }
+  .name-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+    padding: 9px 4px; border-bottom: 1px solid #f0f1f3; font-size: 13px;
+  }
+  .name-row:nth-child(odd) { background: #fafbfc; }
+  /* 幅が狭いと氏名側が右側のタグに押しつぶされ、日本語が1文字ずつ縦に
+     折り返される事故が起きていたため、氏名に最低幅を確保しておき、
+     入りきらない場合はタグ側を次の行に折り返す(氏名を潰さない)。 */
+  .name-main { flex: 1 1 140px; min-width: 140px; line-height: 1.4; }
+  .name-main .katakana { color: #667085; margin-left: 6px; font-size: 12px; }
+  .name-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+  .source-tag {
+    font-size: 11px; color: #475467; background: #eef1f4; border: 1px solid #d0d5dd;
+    border-radius: 6px; padding: 2px 7px; white-space: nowrap;
+  }
+  .name-row .referrer { color: #175cd3; font-size: 12px; white-space: nowrap; }
+  .name-row .referrer::before { content: "紹介: "; color: #98a2b3; }
+
+  .actions { margin-top: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  button { font-size: 13px; padding: 8px 14px; border-radius: 8px; border: 1px solid #175cd3; background: #175cd3; color: #fff; cursor: pointer; }
+  button.secondary { background: #fff; color: #175cd3; }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .write-status { font-size: 12px; color: #067647; }
+  .write-status.error { color: #b42318; }
+
+  .update-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: #fff; border: 1px solid #e3e6ea; border-radius: 10px;
+    padding: 10px 14px; margin-bottom: 14px;
+  }
+  .update-status { font-size: 12px; color: #475467; }
+  .update-status.done { color: #067647; }
+  .update-status.error { color: #b42318; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tab-button {
+    flex: 1; font-size: 13px; font-weight: 600; padding: 9px 4px; white-space: nowrap;
+    border-radius: 8px; border: 1px solid #d0d5dd; background: #fff; color: #475467;
+    cursor: pointer;
+  }
+  .tab-button.active { background: #175cd3; border-color: #175cd3; color: #fff; }
+  .tab-badge {
+    display: inline-block; margin-left: 6px; min-width: 18px; padding: 1px 6px;
+    border-radius: 999px; background: #f04438; color: #fff; font-size: 11px; font-weight: 700;
+  }
+
+  /* 未紐づけ画面 */
+  .unlinked-help { font-size: 12.5px; color: #475467; margin: 0 0 6px; line-height: 1.5; }
+  .unlinked-card-head { display: flex; align-items: flex-start; gap: 10px; }
+  .unlinked-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+  .unlinked-count {
+    flex-shrink: 0; font-size: 13px; font-weight: 700; color: #b54708; background: #fef0c7;
+    border-radius: 999px; padding: 3px 10px; white-space: nowrap;
+  }
+  .name-chips { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 8px 0; }
+  .name-chip { font-size: 12px; background: #f2f4f7; border-radius: 6px; padding: 2px 8px; color: #344054; }
+  .name-chip.more { background: transparent; color: #667085; }
+  .link-row { display: flex; gap: 8px; align-items: stretch; margin-top: 8px; }
+  .link-row { flex-wrap: wrap; }
+  .link-button.secondary { background: #fff; color: #b42318; border-color: #fda29b; }
+  .link-select {
+    flex: 1; min-width: 0; font-size: 13px; padding: 8px 8px; border: 1px solid #d0d5dd;
+    border-radius: 8px; background: #fff; font-family: inherit;
+  }
+  .legacy-section { margin-top: 4px; }
+  .legacy-section summary { cursor: pointer; font-size: 13px; font-weight: 600; color: #475467; padding: 6px 0; }
+  .legacy-row {
+    display: flex; gap: 10px; justify-content: space-between; padding: 6px 0;
+    border-bottom: 1px solid #f0f1f3; font-size: 12.5px; color: #344054;
+  }
+  .legacy-row span:first-child { min-width: 0; overflow-wrap: anywhere; }
+  .legacy-row span:last-child { flex-shrink: 0; color: #667085; }
+
+  /* データの取得状況 */
+  .source-panel { background: #fff; border: 1px solid #e3e6ea; border-radius: 10px; margin-bottom: 14px; }
+  .source-panel summary { cursor: pointer; padding: 10px 14px; font-size: 13px; font-weight: 700; color: #344054; list-style: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .source-panel summary::-webkit-details-marker { display: none; }
+  .source-panel summary::after { content: "▾"; margin-left: auto; color: #98a2b3; }
+  .source-panel[open] summary::after { transform: rotate(180deg); }
+  .source-panel.has-problem { border-color: #fda29b; background: #fffbfa; }
+  .source-summary-note { font-size: 12px; font-weight: 600; }
+  .source-summary-note.ok { color: #067647; }
+  .source-summary-note.warn { color: #b54708; }
+  .source-summary-note.bad { color: #b42318; }
+  .source-rows { padding: 0 14px 10px; }
+  .source-row { display: flex; gap: 8px 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid #f0f1f3; font-size: 12.5px; flex-wrap: wrap; }
+  .source-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; background: #98a2b3; }
+  .source-dot.ok { background: #12b76a; }
+  .source-dot.warn { background: #f79009; }
+  .source-dot.bad { background: #f04438; }
+  .source-name { font-weight: 700; color: #1f2430; min-width: 120px; }
+  .source-detail { flex: 1 1 200px; min-width: 0; color: #475467; line-height: 1.5; overflow-wrap: anywhere; }
+  .source-detail .source-problem { color: #b42318; font-weight: 600; }
+
+  #copySource { position: absolute; left: -9999px; top: -9999px; }
+</style>
+
+<h1>Wonder+ 集客状況ダッシュボード</h1>
+<div class="updated-at" id="updatedAt"></div>
+<div class="update-bar">
+  <button id="updateNowButton">今すぐ更新(Peatix)</button>
+  <span class="update-status" id="updateStatusText"></span>
+</div>
+<details class="source-panel" id="sourcePanel">
+  <summary><span>データの取得状況</span><span class="source-summary-note" id="sourceSummaryNote"></span></summary>
+  <div class="source-rows" id="sourceRows"></div>
+</details>
+<div class="tabs">
+  <button type="button" class="tab-button active" id="tabUpcoming">最新の予定</button>
+  <button type="button" class="tab-button" id="tabPast">過去のイベント</button>
+  <button type="button" class="tab-button" id="tabUnlinked">未紐づけ<span class="tab-badge" id="unlinkedBadge" hidden></span></button>
+</div>
+<div class="event-picker" id="eventPicker">
+  <button type="button" class="event-picker-trigger" id="eventPickerTrigger">
+    <span class="event-picker-trigger-text">
+      <span class="event-picker-trigger-title" id="eventPickerTitle">読み込み中…</span>
+      <span class="event-picker-trigger-sub" id="eventPickerSub"></span>
+    </span>
+    <span class="event-picker-count" id="eventPickerCount"></span>
+    <span class="event-picker-arrow" aria-hidden="true">▾</span>
+  </button>
+  <div class="event-picker-list" id="eventPickerList" hidden></div>
+</div>
+<div id="detail"></div>
+<div id="unlinkedView" hidden></div>
+<textarea id="copySource"></textarea>
+
+<script>
+  const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5分ごとに自動更新
+  let currentData = { upcomingEvents: [], pastEvents: [], unlinked: [], legacy: [] };
+  let activeTab = "<?= initialTab ?>"; // "upcoming" | "past" | "unlinked"(URLの?tab=で指定)
+  let selectedEventId = { upcoming: null, past: null };
+
+  function currentEvents() {
+    if (activeTab === "upcoming") return currentData.upcomingEvents || [];
+    if (activeTab === "past") return currentData.pastEvents || [];
+    return [];
+  }
+
+  // 現在のタブに応じて、イベント選択+詳細(最新/過去)か、未紐づけ画面かを描画する。
+  function renderActiveView() {
+    document.getElementById("tabUpcoming").classList.toggle("active", activeTab === "upcoming");
+    document.getElementById("tabPast").classList.toggle("active", activeTab === "past");
+    document.getElementById("tabUnlinked").classList.toggle("active", activeTab === "unlinked");
+    const isUnlinked = activeTab === "unlinked";
+    document.getElementById("eventPicker").hidden = isUnlinked;
+    document.getElementById("detail").hidden = isUnlinked;
+    document.getElementById("unlinkedView").hidden = !isUnlinked;
+    if (isUnlinked) {
+      renderUnlinked();
+    } else {
+      renderSelect();
+      renderDetail();
+    }
+  }
+
+  function renderUnlinked() {
+    const view = document.getElementById("unlinkedView");
+    const items = currentData.unlinked || [];
+    const total = currentData.unlinkedTotal || 0;
+    const legacy = currentData.legacy || [];
+
+    const cards = items.map((item, i) => {
+      const candidates = item.candidates || [];
+      const names = item.names.map((n) => `<span class="name-chip">${escapeHtml(n.name)}</span>`).join("");
+      const more = item.uniqueCount > item.names.length
+        ? `<span class="name-chip more">ほか${item.uniqueCount - item.names.length}名</span>` : "";
+      // 候補は「同じ日・同じ会場 → 同じ日の他会場 → 前後3日」の順にグループ分けして出す。
+      const groups = [];
+      candidates.forEach((c) => {
+        let group = groups.find((g) => g.label === c.group);
+        if (!group) { group = { label: c.group, items: [] }; groups.push(group); }
+        group.items.push(c);
+      });
+      const optionsHtml = groups.map((g) => `
+        <optgroup label="${escapeHtml(g.label)}">
+          ${g.items.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("")}
+        </optgroup>`).join("");
+      const noCandidateNote = candidates.length ? "" :
+        `<p class="unlinked-help">${item.dateKey ? "近い日付の公式イベントが見つかりません。" : "日付を読み取れないため、候補を表示できません。"}別企画のイベントなら「対象外にする」を選べます。</p>`;
+      const linkUi = `${noCandidateNote}
+        <div class="link-row">
+          ${candidates.length ? `<select class="link-select" data-index="${i}">
+            <option value="">公式イベントを選択…</option>${optionsHtml}
+          </select>
+          <button type="button" class="link-button" data-index="${i}">紐づける</button>` : ""}
+          <button type="button" class="link-button secondary ignore-button" data-index="${i}">対象外にする</button>
+        </div>
+        <div class="write-status" id="linkStatus${i}"></div>`;
+      return `
+        <div class="event-card">
+          <div class="unlinked-card-head">
+            <div class="unlinked-title">${escapeHtml(item.rawEventName)}</div>
+            <div class="unlinked-count">${item.uniqueCount}名</div>
+          </div>
+          <div class="source-list"><span>${escapeHtml(formatSource(item.platform + "/" + item.account))}</span>${item.dateKey ? `<span>${escapeHtml(item.dateKey)}</span>` : ""}</div>
+          <div class="name-chips">${names}${more}</div>
+          ${linkUi}
+        </div>`;
+    }).join("");
+
+    const legacyHtml = legacy.length ? `
+      <div class="event-card legacy-section">
+        <details>
+          <summary>旧データ(公式サイトに無いイベント) ${currentData.legacyTotal || legacy.length}件</summary>
+          <p class="unlinked-help">旧スプレッドシート由来や、公式サイトが掲載を終了した過去イベントです。参照用の一覧で、集計には影響しません。</p>
+          ${legacy.map((l) => `<div class="legacy-row"><span>${escapeHtml(l.title)}</span><span>${l.uniqueCount}名</span></div>`).join("")}
+        </details>
+      </div>` : "";
+
+    view.innerHTML = `
+      <div class="event-card">
+        <p class="event-name">紐づけ待ちの予約</p>
+        <p class="unlinked-help">公式イベントを選んで「紐づける」を押すと確定します。以降は媒体側でタイトルが変わっても自動で反映されます。</p>
+        <p class="unlinked-help"><strong>${total}</strong>件のイベント表記が未紐づけです${total > items.length ? `(今日に近い${items.length}件を表示)` : ""}。</p>
+        ${currentData.unlinkedStaleTotal ? `<p class="unlinked-help">45日より前に終わったイベントや去年以前の開催回(${currentData.unlinkedStaleTotal}件)は、確認の意味が薄いためここには表示していません。</p>` : ""}
+      </div>
+      ${cards || '<div class="event-card"><p class="empty">未紐づけの予約はありません。</p></div>'}
+      ${legacyHtml}`;
+
+    view.querySelectorAll(".link-button").forEach((button) => {
+      button.addEventListener("click", () => {
+        const index = Number(button.dataset.index);
+        const item = items[index];
+        const isIgnore = button.classList.contains("ignore-button");
+        const select = view.querySelector(`.link-select[data-index="${index}"]`);
+        const status = document.getElementById("linkStatus" + index);
+        // 「対象外にする」は公式イベントを選ばず確定する(別企画・去年の回答など)。
+        const targetId = isIgnore ? "__ignore__" : (select ? select.value : "");
+        if (!targetId) {
+          status.className = "write-status error";
+          status.textContent = "紐づけ先の公式イベントを選んでください";
+          return;
+        }
+        const originalLabel = button.textContent;
+        button.disabled = true;
+        button.textContent = "保存中…";
+        google.script.run
+          .withSuccessHandler(() => {
+            document.getElementById("updatedAt").textContent = "紐づけを保存しました。反映しています…";
+            load();
+          })
+          .withFailureHandler((err) => {
+            button.disabled = false;
+            button.textContent = originalLabel;
+            status.className = "write-status error";
+            status.textContent = "保存に失敗しました: " + (err && err.message ? err.message : err);
+          })
+          .linkEvent(item.platform, item.account, item.platformEventId, item.rawEventName, targetId);
+      });
+    });
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[ch]));
+  }
+
+  let eventPickerOpen = false;
+
+  function setEventPickerOpen(open) {
+    eventPickerOpen = open;
+    document.getElementById("eventPicker").classList.toggle("open", open);
+    const list = document.getElementById("eventPickerList");
+    list.hidden = !open;
+    document.getElementById("eventPickerTrigger").setAttribute("aria-expanded", String(open));
+  }
+
+  // イベント選択UI: タイトルを上段に大きく、集客人数を目立つバッジとして
+  // 分けて表示する(ネイティブselectの1行表示だと窮屈で見づらかったため)。
+  function renderSelect() {
+    const trigger = document.getElementById("eventPickerTrigger");
+    const titleEl = document.getElementById("eventPickerTitle");
+    const subEl = document.getElementById("eventPickerSub");
+    const countEl = document.getElementById("eventPickerCount");
+    const list = document.getElementById("eventPickerList");
+    const events = currentEvents();
+
+    if (!events.length) {
+      trigger.disabled = true;
+      titleEl.textContent = "イベントがありません";
+      subEl.textContent = "";
+      countEl.textContent = "";
+      list.innerHTML = "";
+      setEventPickerOpen(false);
+      return;
+    }
+    trigger.disabled = false;
+
+    const selected = selectedEventId[activeTab];
+    if (!selected || !events.some((e) => e.eventId === selected)) {
+      selectedEventId[activeTab] = events[0].eventId;
+    }
+    const current = events.find((e) => e.eventId === selectedEventId[activeTab]);
+    titleEl.textContent = current.displayName;
+    subEl.textContent = `全${events.length}件中`;
+    countEl.textContent = `${current.uniqueCount}名`;
+
+    list.innerHTML = events.map((event) => `
+      <button type="button" class="event-picker-item ${event.eventId === selectedEventId[activeTab] ? "active" : ""}" data-event-id="${escapeHtml(event.eventId)}">
+        <span class="event-picker-item-title">${escapeHtml(event.displayName)}</span>
+        <span class="event-picker-item-count">${event.uniqueCount}名</span>
+      </button>
+    `).join("");
+    list.querySelectorAll(".event-picker-item").forEach((item) => {
+      item.addEventListener("click", () => {
+        selectedEventId[activeTab] = item.dataset.eventId;
+        setEventPickerOpen(false);
+        renderSelect();
+        renderDetail();
+      });
+    });
+  }
+
+  // クリップボードにコピーする一覧テキストを組み立てる。
+  // カタカナ氏名のみ、1行1名(ユーザー指示: コピーはカタカナ名だけでよい)。
+  function buildCopyText(event) {
+    return event.names.map((n) => n.katakana || n.name).join("\n");
+  }
+
+  // 媒体コードを画面表示用のラベルに変換する("peatix/Jua Party" → "Peatix/Jua Party" 等)。
+  const PLATFORM_LABELS = { peatix: "Peatix", kokuchpro: "こくちーず", googleForms: "フォーム", tunagate: "つなげーと", jimoty: "ジモティ", evemado: "イベマド", wpBookings: "公式サイト" };
+  function formatSource(source) {
+    const idx = String(source || "").indexOf("/");
+    if (idx === -1) return source || "";
+    const platform = source.slice(0, idx);
+    const account = source.slice(idx + 1);
+    return `${PLATFORM_LABELS[platform] || platform}/${account}`;
+  }
+
+  function copyToClipboard(text, statusEl) {
+    const done = () => {
+      statusEl.className = "write-status";
+      statusEl.textContent = "コピーしました";
+      setTimeout(() => { statusEl.textContent = ""; }, 2500);
+    };
+    const fail = () => {
+      // クリップボードAPIが使えない環境向けのフォールバック。
+      const source = document.getElementById("copySource");
+      source.value = text;
+      source.style.left = "0";
+      source.style.top = "0";
+      source.focus();
+      source.select();
+      try {
+        document.execCommand("copy");
+        done();
+      } catch (e) {
+        statusEl.className = "write-status error";
+        statusEl.textContent = "コピーに失敗しました。手動で選択してコピーしてください。";
+      }
+      source.style.left = "-9999px";
+      source.style.top = "-9999px";
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(fail);
+    } else {
+      fail();
+    }
+  }
+
+  function renderDetail() {
+    const container = document.getElementById("detail");
+    const events = currentEvents();
+    if (!events.length) {
+      container.innerHTML = '<p class="empty">該当するイベントがありません。</p>';
+      return;
+    }
+    const event = events.find((e) => e.eventId === selectedEventId[activeTab]);
+    if (!event) {
+      container.innerHTML = '<p class="empty">イベントを選択してください。</p>';
+      return;
+    }
+    const referrerCounts = event.referrerCounts || [];
+    container.innerHTML = `
+      <div class="event-card">
+        <p class="event-name">${escapeHtml(event.displayName)}</p>
+        <div class="totals">
+          <span class="totals-count">${event.uniqueCount}</span>
+          <span class="totals-unit">名</span>
+          <span class="totals-label">(氏名ベースの重複除外)</span>
+        </div>
+        <div class="source-list">
+          ${event.sourceCounts.map((s) => `<span>${escapeHtml(formatSource(s.source))}: ${s.count}件</span>`).join("")}
+        </div>
+        ${referrerCounts.length ? `
+          <div class="source-list referrer-list">
+            ${referrerCounts.map((r) => `<span>担当: ${escapeHtml(r.referrer)}: ${r.count}件</span>`).join("")}
+          </div>
+        ` : ""}
+        <div class="name-list-head">
+          <span>お客様名簿(取得元・紹介者を併記)</span>
+        </div>
+        <div class="name-list">
+          ${event.names.map((n) => `
+            <div class="name-row">
+              <span class="name-main">${escapeHtml(n.name)}${n.katakana && n.katakana !== n.name ? `<span class="katakana">(${escapeHtml(n.katakana)})</span>` : ""}</span>
+              <span class="name-meta">
+                <span class="source-tag">${escapeHtml(formatSource(n.source))}</span>
+                ${n.referrer ? `<span class="referrer">${escapeHtml(n.referrer)}</span>` : ""}
+              </span>
+            </div>
+          `).join("") || '<div class="empty" style="padding:8px 4px;">予約者名がありません</div>'}
+        </div>
+        <div class="actions">
+          <button id="copyButton" class="secondary" ${event.names.length ? "" : "disabled"}>名前一覧をコピー</button>
+          <span class="write-status" id="writeStatus"></span>
+        </div>
+      </div>
+    `;
+    document.getElementById("copyButton").addEventListener("click", () => {
+      const status = document.getElementById("writeStatus");
+      copyToClipboard(buildCopyText(event), status);
+    });
+  }
+
+  // ---- データの取得状況 ----
+  // 媒体ごとの最終取得結果(SourceStatus)を表示する。「予約が0件」なのか
+  // 「取得に失敗していて古いデータのまま」なのかを見分けられるようにする。
+  const EXPECTED_SOURCES = [
+    { platform: "peatix", note: "専用PCで実行(メール認証コードによるログインが必要)" },
+    { platform: "kokuchpro", note: "" },
+    { platform: "googleForms", note: "" },
+    { platform: "jimoty", note: "専用PCで実行" },
+    { platform: "evemado", note: "専用PCで実行" },
+    { platform: "wpBookings", note: "専用PCで実行(公式サイト管理画面にログインが必要)" },
+    { platform: "tunagate", note: "未連携(ログインメールが届かないため取得できていません)", unsupported: true }
+  ];
+
+  function describeAge(ms) {
+    const min = Math.floor(ms / 60000);
+    if (min < 1) return "たった今";
+    if (min < 60) return `${min}分前`;
+    const hours = Math.floor(min / 60);
+    if (hours < 48) return `${hours}時間前`;
+    return `${Math.floor(hours / 24)}日前`;
+  }
+
+  function friendlyProblem(message) {
+    const m = String(message || "");
+    if (/セッション|ログイン|認証/.test(m)) return "ログインの有効期限が切れています。専用PCで再ログインしてください。";
+    if (/403|Forbidden/i.test(m)) return "サイト側に接続を拒否されています(アクセス元のブロック)。";
+    return m ? "取得に失敗しました: " + m : "取得に失敗しました。";
+  }
+
+  function sourceLevel(row, now) {
+    if (row.status === "error") return "bad";
+    const t = Date.parse(row.lastSuccessAt || row.lastAttemptAt || "");
+    if (!t) return "bad";
+    const age = now - t;
+    if (age < 6 * 3600000) return "ok";
+    if (age < 24 * 3600000) return "warn";
+    return "bad";
+  }
+
+  let sourcePanelInitialized = false;
+  function renderSources(sources) {
+    const now = Date.now();
+    const rows = [];
+    const seen = new Set();
+    (sources || []).forEach((row) => { seen.add(row.platform); rows.push(row); });
+    const missing = EXPECTED_SOURCES.filter((e) => !seen.has(e.platform));
+    const levelRank = { bad: 2, warn: 1, ok: 0 };
+    const html = [];
+    let worst = "ok";
+    let problems = 0;
+
+    rows.sort((a, b) => (PLATFORM_LABELS[a.platform] || a.platform).localeCompare(PLATFORM_LABELS[b.platform] || b.platform, "ja") || a.account.localeCompare(b.account, "ja"));
+    rows.forEach((row) => {
+      const level = sourceLevel(row, now);
+      if (level !== "ok") problems += 1;
+      if (levelRank[level] > levelRank[worst]) worst = level;
+      const expected = EXPECTED_SOURCES.find((e) => e.platform === row.platform);
+      const success = Date.parse(row.lastSuccessAt || "");
+      const attempt = Date.parse(row.lastAttemptAt || "");
+      let line = success ? `最後に取得できたのは ${describeAge(now - success)}(${new Date(success).toLocaleString("ja-JP")})` : "まだ一度も取得できていません";
+      if (row.status === "ok") line += ` / 取得 ${row.rowCount}件`;
+      if (attempt) line += ` / 最終確認 ${describeAge(now - attempt)}`;
+      if (row.runner) line += ` / 実行元: ${row.runner}`;
+      html.push(`
+        <div class="source-row">
+          <span class="source-dot ${level}"></span>
+          <span class="source-name">${escapeHtml(PLATFORM_LABELS[row.platform] || row.platform)}/${escapeHtml(row.account)}</span>
+          <span class="source-detail">${escapeHtml(line)}
+            ${row.status === "error" ? `<br><span class="source-problem">${escapeHtml(friendlyProblem(row.message))}</span>` : ""}
+            ${level !== "ok" && row.status !== "error" ? `<br><span class="source-problem">更新が止まっている可能性があります。</span>` : ""}
+            ${expected && expected.note ? `<br>${escapeHtml(expected.note)}` : ""}
+          </span>
+        </div>`);
+    });
+    missing.forEach((e) => {
+      if (!e.unsupported) { problems += 1; worst = "bad"; }
+      html.push(`
+        <div class="source-row">
+          <span class="source-dot ${e.unsupported ? "" : "bad"}"></span>
+          <span class="source-name">${escapeHtml(PLATFORM_LABELS[e.platform] || e.platform)}</span>
+          <span class="source-detail">${e.unsupported ? "" : '<span class="source-problem">取得結果の記録がありません(まだ一度も実行されていません)。</span><br>'}${escapeHtml(e.note)}</span>
+        </div>`);
+    });
+
+    const note = document.getElementById("sourceSummaryNote");
+    note.className = "source-summary-note " + (problems === 0 ? "ok" : worst);
+    note.textContent = problems === 0 ? "すべて正常に取得できています" : `${problems}件の媒体で取得に問題があります(人数が実際より少ない可能性があります)`;
+    document.getElementById("sourceRows").innerHTML = html.join("");
+    const panel = document.getElementById("sourcePanel");
+    panel.classList.toggle("has-problem", problems > 0);
+    if (!sourcePanelInitialized) { sourcePanelInitialized = true; panel.open = problems > 0; }
+  }
+
+  function render(data) {
+    try {
+      if (data && data.error) {
+        document.getElementById("updatedAt").textContent = "サーバーエラー: " + data.message + " / " + data.stack;
+        return;
+      }
+      currentData = data;
+      renderSources(data.sources);
+      document.getElementById("updatedAt").textContent = "最終更新: " + new Date(data.updatedAt).toLocaleString("ja-JP");
+      const badge = document.getElementById("unlinkedBadge");
+      badge.textContent = String(data.unlinkedTotal || 0);
+      badge.hidden = !(data.unlinkedTotal > 0);
+      renderActiveView();
+    } catch (e) {
+      document.getElementById("updatedAt").textContent = "表示エラー: " + e.message;
+    }
+  }
+
+  function load() {
+    google.script.run
+      .withSuccessHandler(render)
+      .withFailureHandler((err) => {
+        document.getElementById("updatedAt").textContent = "読み込みエラー: " + (err && err.message ? err.message : err);
+      })
+      .fetchDashboardData();
+  }
+
+  // 「今すぐ更新」: スマホ等から押すと、専用PC上で常駐しているスクリプトが
+  // 数秒〜十数秒以内に検知してPeatixの取得を開始する。ログインが必要な
+  // 場合はPC側の画面に案内が出るので、Gmailを確認できる人がその場で
+  // 認証コードを入力する(その間の状況もこのステータス欄に表示される)。
+  let updatePollTimer = null;
+
+  function setUpdateButtonState(status) {
+    const button = document.getElementById("updateNowButton");
+    const text = document.getElementById("updateStatusText");
+    const busy = status.status === "requested" || status.status === "running";
+    button.disabled = busy;
+    button.textContent = busy ? "更新中…" : "今すぐ更新(Peatix)";
+    text.className = "update-status" + (status.status === "error" ? " error" : status.status === "done" ? " done" : "");
+    text.textContent = status.message || "";
+  }
+
+  function pollUpdateStatus() {
+    google.script.run.withSuccessHandler((status) => {
+      setUpdateButtonState(status);
+      if (status.status === "requested" || status.status === "running") {
+        updatePollTimer = setTimeout(pollUpdateStatus, 3000);
+        return;
+      }
+      if (updatePollTimer) { clearTimeout(updatePollTimer); updatePollTimer = null; }
+      if (status.status === "done") load(); // 完了したら最新データを取り込む
+    }).fetchUpdateStatus();
+  }
+
+  document.getElementById("updateNowButton").addEventListener("click", () => {
+    google.script.run.withSuccessHandler((status) => {
+      setUpdateButtonState(status);
+      pollUpdateStatus();
+    }).requestPeatixUpdate();
+  });
+
+  document.getElementById("eventPickerTrigger").addEventListener("click", () => {
+    setEventPickerOpen(!eventPickerOpen);
+  });
+  document.addEventListener("click", (e) => {
+    if (eventPickerOpen && !document.getElementById("eventPicker").contains(e.target)) {
+      setEventPickerOpen(false);
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (eventPickerOpen && e.key === "Escape") setEventPickerOpen(false);
+  });
+
+  function switchTab(tab) {
+    activeTab = tab;
+    document.getElementById("tabUpcoming").classList.toggle("active", tab === "upcoming");
+    document.getElementById("tabPast").classList.toggle("active", tab === "past");
+    document.getElementById("tabUnlinked").classList.toggle("active", tab === "unlinked");
+    setEventPickerOpen(false);
+    renderActiveView();
+  }
+  document.getElementById("tabUpcoming").addEventListener("click", () => switchTab("upcoming"));
+  document.getElementById("tabPast").addEventListener("click", () => switchTab("past"));
+  document.getElementById("tabUnlinked").addEventListener("click", () => switchTab("unlinked"));
+
+  load();
+  pollUpdateStatus(); // ページを開いた時点で他の人が更新中なら状況を表示する
+  setInterval(load, REFRESH_INTERVAL_MS);
+</script>
