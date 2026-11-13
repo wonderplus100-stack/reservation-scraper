@@ -54,12 +54,19 @@ async function reportStatus(sheetId, { ok, message, rowCount }) {
   }
 }
 
+const PENDING_STAMP = path.resolve("data", "whitekey-pending-at.txt");
+function pendingIsStale() {
+  try {
+    return Date.now() - Number(fs.readFileSync(PENDING_STAMP, "utf8")) >= PENDING_REFRESH_MS;
+  } catch {
+    return true;
+  }
+}
+
 // 未入力一覧の作り直し(1時間に1回まで): これから150日以内の予約のうち、whitekeyにパーティーが無いもの。
 async function refreshPending({ sheetId, raw, official, ledger, wk }) {
-  const stamp = path.resolve("data", "whitekey-pending-at.txt");
-  try {
-    if (Date.now() - Number(fs.readFileSync(stamp, "utf8")) < PENDING_REFRESH_MS) return;
-  } catch {}
+  const stamp = PENDING_STAMP;
+  if (!pendingIsStale()) return;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const { entries } = await buildEntries({ raw, official, ledger, sources: ["kokuchpro", "wpBookings"], eventFilter: (e) => isUpcoming(e, today) });
@@ -118,6 +125,9 @@ async function main() {
   });
   const dueIds = new Set(due.map((e) => e.canonicalEventId));
   console.log(`[${now.toLocaleString("ja-JP")}] 入力の時間帯のイベント: ${due.length}件 / ${commit ? "登録する" : "予定を表示するだけ(登録しない)"}`);
+
+  // 入力の時間帯のイベントが無く、未入力一覧の更新も不要なら、whitekeyにはログインしない。
+  if (due.length === 0 && !pendingIsStale()) return;
 
   let wk = null;
   let entered = 0;
