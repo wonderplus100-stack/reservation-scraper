@@ -19,6 +19,7 @@ import { fillRegistration, leaveWithoutRegistering, openRegistration, readBackRe
 import { collectForEvents } from "../scrapers/wpBookings.mjs";
 import { collectForPlatformEventIds } from "../scrapers/kokuchpro.mjs";
 import { dueSlots, eventStart, readStamps, writeStamps } from "../lib/whitekeySchedule.mjs";
+import { warmDashboardCache } from "../lib/dashboardWarm.mjs";
 
 // whitekeyの受付登録への自動入力(リスト更新)。専用PCのタスクスケジューラが5分おきに呼び出し、
 // lib/whitekeySchedule.mjs のスケジュールに当たったイベントだけを処理する:
@@ -252,4 +253,6 @@ async function main() {
   }
 }
 
-main();
+// ダッシュボードの画面データのキャッシュを温めておく(失敗しても入力処理には影響させない)。
+const warm = warmDashboardCache().catch((err) => console.warn("ダッシュボードのキャッシュ更新に失敗しました:", err.message));
+main().finally(() => warm);
