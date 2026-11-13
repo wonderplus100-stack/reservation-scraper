@@ -89,6 +89,12 @@ async function main() {
     console.log("このPCではwhitekey自動入力は無効です(.env の WHITEKEY_ENABLED=true で有効。動かすPCは1台だけにしてください)。");
     return;
   }
+  // 何かが固まっても、次の5分おきの実行を妨げないよう、15分で必ず終了する(タスクの二重起動防止は
+  // 「実行中なら飛ばす」設定のため、固まったまま残ると以降の自動入力が全て止まる)。
+  setTimeout(() => {
+    console.error("whitekey自動入力: 15分を超えたため強制終了します");
+    process.exit(2);
+  }, 15 * 60 * 1000).unref();
   const sheetId = process.env.SHEET_ID;
   const commit = process.argv.includes("--commit") || process.env.WHITEKEY_COMMIT === "true";
   const lead = Number(arg("lead")) || LEAD_MINUTES_DEFAULT;
