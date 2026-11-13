@@ -13,11 +13,13 @@ import {
 } from "../lib/sheetsClient.mjs";
 import { fetchEventPostIds } from "../lib/eventPrices.mjs";
 import { buildEntries, isUpcoming } from "../lib/whitekeyPlan.mjs";
-import { annotateParties, matchParty } from "../lib/whitekeyMatch.mjs";
-import { openPartyList, openWhitekey, readParties, showDate } from "../lib/whitekeyClient.mjs";
+import { annotateParties, findDuplicate, matchParty } from "../lib/whitekeyMatch.mjs";
+import { openPartyList, openWhitekey, readParties, readRegistrants, showDate } from "../lib/whitekeyClient.mjs";
 import { fillRegistration, leaveWithoutRegistering, openRegistration, readBackRegistration, submitRegistration } from "../lib/whitekeyEntry.mjs";
 import { collectForEvents } from "../scrapers/wpBookings.mjs";
 import { collectForPlatformEventIds } from "../scrapers/kokuchpro.mjs";
+import { collectForPeatixEvents } from "../scrapers/peatix.mjs";
+import { peatixCategoryOf } from "../lib/whitekeyRules.mjs";
 import { dueSlots, eventStart, readStamps, writeStamps } from "../lib/whitekeySchedule.mjs";
 import { warmDashboardCache } from "../lib/dashboardWarm.mjs";
 
@@ -33,6 +35,8 @@ import { warmDashboardCache } from "../lib/dashboardWarm.mjs";
 //   --event: スケジュールに関係なく、そのイベントを対象にする(試験用)。--now: 時刻を指定して確認する(記録はしない)。
 const PENDING_REFRESH_MS = 60 * 60 * 1000;
 const RUNNER = "このPC";
+// 入力する取得先。Peatixは、カフェ会系・朝活・レギュラー異業種交流会のイベントだけ(lib/whitekeyRules.mjs)。
+const SOURCES = ["kokuchpro", "wpBookings", "peatix"];
 
 function arg(name) {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -66,7 +70,7 @@ async function refreshPending({ sheetId, raw, official, ledger, wk }) {
   if (!pendingIsStale()) return;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const { entries } = await buildEntries({ raw, official, ledger, sources: ["kokuchpro", "wpBookings"], eventFilter: (e) => isUpcoming(e, today) });
+  const { entries } = await buildEntries({ raw, official, ledger, sources: SOURCES, eventFilter: (e) => isUpcoming(e, today) });
   const partiesByDate = new Map();
   const pending = [];
   for (const entry of entries) {
@@ -133,6 +137,7 @@ async function main() {
 
   let wk = null;
   let entered = 0;
+  let duplicates = 0;
   const notes = [];
   try {
     // 1. 最新の予約を取り直す(失敗しても、直近のRawDataで続ける)
@@ -140,6 +145,7 @@ async function main() {
     if (due.length > 0) {
       const fresh = [];
       const freshPlatformEventIds = new Set();
+      const freshPeatixIds = new Set();
       let wpFresh = false;
       try {
         const postIds = await fetchEventPostIds(dueIds);
@@ -164,7 +170,28 @@ async function main() {
           notes.push(`こくちーずの最新化に失敗(直近の取得データで続行): ${err.message}`);
         }
       }
+      // Peatix: 入力対象の種別(カフェ会系・朝活・レギュラー)のイベントだけ、その場で取り直す。
+      const eligiblePeatix = platformEventMap.filter(
+        (m) => m.platform === "peatix" && dueIds.has(m.officialEventId) && peatixCategoryOf(due.find((e) => e.canonicalEventId === m.officialEventId)?.canonicalEventName)
+      );
+      if (eligiblePeatix.length > 0) {
+        try {
+          const items = eligiblePeatix.map((m) => ({
+            platformEventId: m.platformEventId,
+            account: raw.find((r) => r.platform === "peatix" && String(r.platformEventId) === String(m.platformEventId))?.account
+          })).filter((i) => i.account);
+          const rows = await collectForPeatixEvents(items);
+          for (const row of rows) {
+            row.canonicalEventId = eligiblePeatix.find((m) => String(m.platformEventId) === String(row.platformEventId))?.officialEventId;
+            freshPeatixIds.add(String(row.platformEventId));
+            fresh.push(row);
+          }
+        } catch (err) {
+          notes.push(`Peatixの最新化に失敗(直近の取得データで続行): ${err.message}`);
+        }
+      }
       overlay = raw.filter((r) => {
+        if (r.platform === "peatix" && freshPeatixIds.has(String(r.platformEventId))) return false;
         if (wpFresh && r.platform === "wpBookings" && dueIds.has(r.canonicalEventId)) return false;
         if (r.platform === "kokuchpro" && freshPlatformEventIds.has(r.platformEventId)) return false;
         return true;
@@ -173,7 +200,7 @@ async function main() {
     }
 
     // 2. 入れる内容を組み立てる(台帳にある予約は除く)
-    const { entries } = await buildEntries({ raw: overlay, official, ledger, sources: ["kokuchpro", "wpBookings"], eventFilter: (e) => dueIds.has(e.canonicalEventId) });
+    const { entries } = await buildEntries({ raw: overlay, official, ledger, sources: SOURCES, eventFilter: (e) => dueIds.has(e.canonicalEventId) });
     console.log(`未入力の予約: ${entries.length}件`);
 
     // 3. whitekeyにログインして、パーティーを探して入力する
@@ -181,10 +208,18 @@ async function main() {
     await openPartyList(wk.page);
     // パーティー一覧は日付ごとに読む(夜20時の枠は、翌日・翌々日のイベントも対象になる)。
     const partiesByDate = new Map();
+    const registrantsByParty = new Map(); // パーティーごとの「すでにwhitekeyにある予約」(重複を入力しないための照合用)
     const entryDate = (entry) => ymd(eventStart(entry, now));
+    let shownDate = null; // いま一覧に表示している日付
+    const showList = async (date) => {
+      if (shownDate !== date) {
+        await showDate(wk.page, date);
+        shownDate = date;
+      }
+    };
     const loadParties = async (date) => {
       if (!partiesByDate.has(date)) {
-        await showDate(wk.page, date);
+        await showList(date);
         partiesByDate.set(date, annotateParties(await readParties(wk.page)));
       }
       return partiesByDate.get(date);
@@ -199,6 +234,18 @@ async function main() {
         console.log(`  - 入れられません(${state}): ${entry.originalName} ${entry.month}/${entry.day} ${entry.venue} ${entry.time}`);
         continue;
       }
+      // すでにwhitekeyに入っている予約(スタッフの手入力・以前の自動入力)と同じ人は、入力しない。
+      if (!registrantsByParty.has(party.partycode)) {
+        await showList(date);
+        registrantsByParty.set(party.partycode, await readRegistrants(wk.page, party.partycode));
+        shownDate = null; // 読み取り後は、一覧が今日の日付に戻る
+      }
+      const existing = findDuplicate(entry, registrantsByParty.get(party.partycode));
+      if (existing) {
+        duplicates += 1;
+        console.log(`  - すでにwhitekeyにあるため入力しません: ${entry.originalName} ${entry.month}/${entry.day} ${entry.venue} ${entry.time} (${existing.keiyu}/${existing.status})`);
+        continue;
+      }
       const summary = `${entry.originalName} → ${entry.people.map((p) => p.sei + p.mei).join("+")} / ${entry.venue} ${entry.time} / ${entry.fee}円 / ${entry.keiyu.label}`;
       if (!commit) {
         console.log(`  - 入れる予定: ${summary} (${party.partycode})`);
@@ -206,6 +253,7 @@ async function main() {
       }
       const before = party;
       try {
+        await showList(date);
         await openRegistration(wk.page, party.partycode);
         await fillRegistration(wk.page, entry);
         const back = await readBackRegistration(wk.page, entry.people.length);
@@ -223,6 +271,7 @@ async function main() {
         entered += 1;
         // 一覧に戻り、完了人数が増えたかで登録を確認する
         if (!(await wk.page.locator('input[name="searchInputDate"]').count())) await leaveWithoutRegistering(wk.page);
+        shownDate = null;
         partiesByDate.delete(date);
         const after = (await loadParties(date)).find((p) => p.partycode === party.partycode);
         const increase = entry.sexkbn === "2" ? after.doneWomen - before.doneWomen : after.doneMen - before.doneMen;
@@ -242,7 +291,7 @@ async function main() {
     if (!stopped) markDone();
     const ok = !stopped;
     await reportStatus(sheetId, { ok, rowCount: entered, message: stopped || notes.join(" / ") });
-    console.log(`完了: 登録${entered}件${stopped ? " / 停止: " + stopped : ""}`);
+    console.log(`完了: 登録${entered}件 / すでにあるため入力しない${duplicates}件${stopped ? " / 停止: " + stopped : ""}`);
     if (stopped) process.exitCode = 1;
   } catch (err) {
     console.error("whitekey自動入力でエラー:", err.message);

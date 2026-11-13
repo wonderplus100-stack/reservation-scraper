@@ -316,10 +316,21 @@ async function scrapeEventAttendees(page, eventId) {
         const displayNameColumn = findColumn(headers, ["表示名"]) || findColumn(headers, ["氏名", "お名前", "名前", "Name"]);
         const katakanaColumn = findColumn(headers, ["名前"]);
         if (displayNameColumn) {
+          // whitekeyへの自動入力に使う付随情報(チケット名に「男性/女性」と金額が入る)。
+          // 例: 「事前決済　参加チケット 3000円」「女性チケット事前決済 1800円」
+          const ticketColumn = findColumn(headers, ["チケット名"]);
+          const statusColumn = findColumn(headers, ["ステータス"]);
+          const orderColumn = findColumn(headers, ["注文番号"]);
+          const ticketNoColumn = findColumn(headers, ["チケット番号"]);
+          const cell = (row, column) => (column ? String(row[column] || "").trim() : "");
           return rows
             .map((row) => ({
               name: String(row[displayNameColumn] || "").trim(),
-              readingKatakana: katakanaColumn ? String(row[katakanaColumn] || "").trim() : ""
+              readingKatakana: katakanaColumn ? String(row[katakanaColumn] || "").trim() : "",
+              ticketName: cell(row, ticketColumn),
+              amount: (cell(row, ticketColumn).match(/([\d,]+)\s*円/) || [])[1]?.replace(/,/g, "") || "",
+              status: cell(row, statusColumn),
+              orderKey: [cell(row, orderColumn), cell(row, ticketNoColumn)].filter(Boolean).join("-")
             }))
             .filter((r) => r.name);
         }
@@ -417,7 +428,11 @@ async function scrapeAccount(account) {
           rawEventName,
           platformEventId: String(event.eventId),
           reservationName: attendee.name,
-          readingKatakana: attendee.readingKatakana
+          readingKatakana: attendee.readingKatakana,
+          bookingKey: `peatix|${event.eventId}|${attendee.orderKey || attendee.name}`,
+          bookingStatus: attendee.status,
+          ticketName: attendee.ticketName,
+          amount: attendee.amount
         });
       }
     }
@@ -450,9 +465,52 @@ export async function collect() {
         platformEventId: reservation.platformEventId,
         reservationName: reservation.reservationName,
         readingKatakana: reservation.readingKatakana || "",
+        bookingKey: reservation.bookingKey,
+        bookingStatus: reservation.bookingStatus,
+        ticketName: reservation.ticketName,
+        amount: reservation.amount,
         obtainedAt
       });
     }
+  }
+  return rows;
+}
+
+// 開始直前の自動入力(scripts/whitekey-sync.mjs)用: 指定したPeatixイベントの参加者だけを、その場で取得する。
+// items: [{ platformEventId, account }]  保存済みのログイン状態(専用プロファイル)を使う。
+// 返り値は RawData と同じ形の行(platformEventId 付き。公式イベントへの紐づけは呼び出し側)。
+export async function collectForPeatixEvents(items) {
+  const obtainedAt = new Date().toISOString();
+  const byAccount = new Map();
+  for (const { platformEventId, account } of items) {
+    if (!byAccount.has(account)) byAccount.set(account, new Set());
+    byAccount.get(account).add(String(platformEventId));
+  }
+  const rows = [];
+  for (const [account, eventIds] of byAccount) {
+    await withBrowser(`peatix-${account}`, async (page, { hasSavedState }) => {
+      const dashboardUrl = hasSavedState ? await getDashboardUrl(page) : null;
+      if (!isAuthenticatedDashboardUrl(dashboardUrl)) {
+        throw new Error(`Peatix(${account}): 保存済みセッションが無効です。メール確認コードで再ログインしてください(scripts/peatix-relogin.cmd)`);
+      }
+      for (const eventId of eventIds) {
+        await page.waitForTimeout(400);
+        for (const attendee of await scrapeEventAttendees(page, eventId)) {
+          rows.push({
+            platform: "peatix",
+            account,
+            platformEventId: eventId,
+            reservationName: attendee.name,
+            readingKatakana: attendee.readingKatakana || "",
+            bookingKey: `peatix|${eventId}|${attendee.orderKey || attendee.name}`,
+            bookingStatus: attendee.status || "",
+            ticketName: attendee.ticketName || "",
+            amount: attendee.amount || "",
+            obtainedAt
+          });
+        }
+      }
+    }, { persistent: true });
   }
   return rows;
 }

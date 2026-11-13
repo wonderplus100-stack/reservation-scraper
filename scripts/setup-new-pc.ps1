@@ -39,6 +39,17 @@ Register-ScheduledTask -TaskName "WonderPlus-PeatixScrape" -Action $action -Trig
   -Description "Wonder+ 予約の自動取得(Peatix・イベマド・ジモティ・公式サイト予約)" -Force | Out-Null
 Write-Host "登録しました: WonderPlus-PeatixScrape"
 
+
+Write-Host "== whitekey自動入力のタスク(5分おき・既定は無効) =="
+$wkVbs = Join-Path $root "scriptsun-whitekey-sync-hidden.vbs"
+$wkAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('//B //Nologo "' + $wkVbs + '"')
+$wkTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes 5)
+$wkSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
+  -ExecutionTimeLimit (New-TimeSpan -Minutes 20) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName "WonderPlus-WhitekeySync" -Action $wkAction -Trigger $wkTrigger -Settings $wkSettings `
+  -Description "whitekey自動入力(.env の WHITEKEY_ENABLED=true のPCだけ動く。登録は WHITEKEY_COMMIT=true のときだけ)" -Force | Out-Null
+Disable-ScheduledTask -TaskName "WonderPlus-WhitekeySync" | Out-Null
+Write-Host "登録しました(無効の状態): WonderPlus-WhitekeySync。動かすPCで launcher の 5_Start_AutoRun.cmd を実行すると有効になります。"
 Write-Host ""
 Write-Host "次の作業(MIGRATION.md の「ログイン」を参照):"
 Write-Host "  1. scripts\peatix-relogin.cmd をダブルクリック(Peatixの2アカウント。メールの確認コードが必要)"
