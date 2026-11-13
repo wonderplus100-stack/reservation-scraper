@@ -18,17 +18,18 @@ import { openPartyList, openWhitekey, readParties, showDate } from "../lib/white
 import { fillRegistration, leaveWithoutRegistering, openRegistration, readBackRegistration, submitRegistration } from "../lib/whitekeyEntry.mjs";
 import { collectForEvents } from "../scrapers/wpBookings.mjs";
 import { collectForPlatformEventIds } from "../scrapers/kokuchpro.mjs";
+import { dueSlots, eventStart, readStamps, writeStamps } from "../lib/whitekeySchedule.mjs";
 
-// 開始の35分前までに、その時点の全予約をwhitekeyの受付登録に入れる。専用PCのタスクスケジューラで5分おきに実行する。
-//  - 開始の35分前〜開始までのパーティー(=「入力の時間帯」)が対象。まず最新の予約を取り直し、
-//    台帳(WhitekeyLedger)に無い予約だけを入力する(二重入力しない)。時間帯の間に増えた予約も、次回の実行で入る。
+// whitekeyの受付登録への自動入力(リスト更新)。専用PCのタスクスケジューラが5分おきに呼び出し、
+// lib/whitekeySchedule.mjs のスケジュールに当たったイベントだけを処理する:
+//   夜20時(当日+曜日ごとの範囲) / 当日の朝9時 / 当日のイベントの開始30分前 / 開始5分前
+//  - 対象のイベントについて、まず最新の予約を取り直し、台帳(WhitekeyLedger)に無い予約だけを入力する(二重入力しない)。
 //  - whitekeyに該当パーティーが無い予約は入れず、未入力一覧(WhitekeyPending)に残してダッシュボードに出す。
 //  - 登録(書き込み)は --commit または WHITEKEY_COMMIT=true のときだけ。それ以外は「入れる予定」を表示するだけ。
 //  - 動かすPCは1台だけにする: .env に WHITEKEY_ENABLED=true があるPCでのみ動く(他のPCは何もしない)。
 //
-// 使い方: node scripts/whitekey-sync.mjs [--commit] [--lead=35] [--now=2026-11-30T19:00] [--event=<公式イベントID>] [--limit=N]
-//   --event / --now: 時間帯でなくても、そのイベントを対象にする(試験用)。--limit: 1回に入れる最大件数。
-const LEAD_MINUTES_DEFAULT = 35;
+// 使い方: node scripts/whitekey-sync.mjs [--commit] [--now=2026-11-30T20:00] [--event=<公式イベントID>] [--limit=N]
+//   --event: スケジュールに関係なく、そのイベントを対象にする(試験用)。--now: 時刻を指定して確認する(記録はしない)。
 const PENDING_REFRESH_MS = 60 * 60 * 1000;
 const RUNNER = "このPC";
 
@@ -38,11 +39,6 @@ function arg(name) {
 }
 
 const ymd = (d) => `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
-
-function eventStart(event, now) {
-  const [h, m] = String(event.time).split(":").map(Number);
-  return new Date(now.getFullYear(), Number(event.month) - 1, Number(event.day), h, m || 0);
-}
 
 async function reportStatus(sheetId, { ok, message, rowCount }) {
   try {
@@ -104,7 +100,6 @@ async function main() {
   }, 15 * 60 * 1000).unref();
   const sheetId = process.env.SHEET_ID;
   const commit = process.argv.includes("--commit") || process.env.WHITEKEY_COMMIT === "true";
-  const lead = Number(arg("lead")) || LEAD_MINUTES_DEFAULT;
   const now = arg("now") ? new Date(arg("now")) : new Date();
   const forcedEvent = arg("event");
   const limit = Number(arg("limit")) || 40; // 1回に入れる最大件数(想定外の大量入力を防ぐ上限)
@@ -116,18 +111,20 @@ async function main() {
     readPlatformEventMap(sheetId)
   ]);
 
-  // 入力の時間帯にあるイベント: 開始の lead 分前 〜 開始まで(今日のもの)
-  const due = official.filter((e) => {
-    if (forcedEvent) return e.canonicalEventId === forcedEvent;
-    if (Number(e.month) !== now.getMonth() + 1 || Number(e.day) !== now.getDate()) return false;
-    const start = eventStart(e, now);
-    return now >= new Date(start.getTime() - lead * 60000) && now < start;
-  });
+  // いま実行すべき枠(夜20時 / 朝9時 / 開始30分前 / 開始5分前)に当たるイベント
+  const simulated = Boolean(arg("now")) || Boolean(forcedEvent);
+  const stamps = readStamps();
+  const { events: dueEventIds, keys: slotKeys, slots } = forcedEvent
+    ? { events: new Set([forcedEvent]), keys: [], slots: ["指定イベント"] }
+    : dueSlots(official, now, stamps);
+  const due = official.filter((e) => dueEventIds.has(e.canonicalEventId));
   const dueIds = new Set(due.map((e) => e.canonicalEventId));
-  console.log(`[${now.toLocaleString("ja-JP")}] 入力の時間帯のイベント: ${due.length}件 / ${commit ? "登録する" : "予定を表示するだけ(登録しない)"}`);
+  const markDone = () => { if (!simulated && slotKeys.length > 0) writeStamps(stamps, slotKeys, now); };
+  console.log(`[${now.toLocaleString("ja-JP")}] 実行する枠: ${slots.join(" / ") || "なし"} / 対象イベント: ${due.length}件 / ${commit ? "登録する" : "予定を表示するだけ(登録しない)"}`);
 
-  // 入力の時間帯のイベントが無く、未入力一覧の更新も不要なら、whitekeyにはログインしない。
+  // 対象のイベントが無く、未入力一覧の更新も不要なら、whitekeyにはログインしない。
   if (due.length === 0 && !pendingIsStale()) {
+    markDone();
     // 動いていることがダッシュボードで分かるよう、「確認した時刻」だけは記録する。
     await reportStatus(sheetId, { ok: true, rowCount: 0, message: "" });
     return;
@@ -181,14 +178,22 @@ async function main() {
     // 3. whitekeyにログインして、パーティーを探して入力する
     wk = await openWhitekey();
     await openPartyList(wk.page);
-    const today = ymd(forcedEvent && due[0] ? new Date(now.getFullYear(), Number(due[0].month) - 1, Number(due[0].day)) : now);
-    if (entries.length > 0) await showDate(wk.page, today);
-    let parties = annotateParties(await readParties(wk.page));
+    // パーティー一覧は日付ごとに読む(夜20時の枠は、翌日・翌々日のイベントも対象になる)。
+    const partiesByDate = new Map();
+    const entryDate = (entry) => ymd(eventStart(entry, now));
+    const loadParties = async (date) => {
+      if (!partiesByDate.has(date)) {
+        await showDate(wk.page, date);
+        partiesByDate.set(date, annotateParties(await readParties(wk.page)));
+      }
+      return partiesByDate.get(date);
+    };
     const ledgerRows = [];
     let stopped = "";
     for (const entry of entries) {
       if (entered >= limit || stopped) break;
-      const { party, state } = matchParty(entry, parties);
+      const date = entryDate(entry);
+      const { party, state } = matchParty(entry, await loadParties(date));
       if (!party) {
         console.log(`  - 入れられません(${state}): ${entry.originalName} ${entry.month}/${entry.day} ${entry.venue} ${entry.time}`);
         continue;
@@ -217,9 +222,8 @@ async function main() {
         entered += 1;
         // 一覧に戻り、完了人数が増えたかで登録を確認する
         if (!(await wk.page.locator('input[name="searchInputDate"]').count())) await leaveWithoutRegistering(wk.page);
-        await showDate(wk.page, today);
-        parties = annotateParties(await readParties(wk.page));
-        const after = parties.find((p) => p.partycode === party.partycode);
+        partiesByDate.delete(date);
+        const after = (await loadParties(date)).find((p) => p.partycode === party.partycode);
         const increase = entry.sexkbn === "2" ? after.doneWomen - before.doneWomen : after.doneMen - before.doneMen;
         if (increase < entry.people.length) throw new Error(`登録後に完了人数が増えていません(増加${increase}/期待${entry.people.length})`);
       } catch (err) {
@@ -234,6 +238,7 @@ async function main() {
     } catch (err) {
       console.warn("未入力一覧の更新に失敗しました:", err.message);
     }
+    if (!stopped) markDone();
     const ok = !stopped;
     await reportStatus(sheetId, { ok, rowCount: entered, message: stopped || notes.join(" / ") });
     console.log(`完了: 登録${entered}件${stopped ? " / 停止: " + stopped : ""}`);
