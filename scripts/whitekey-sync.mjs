@@ -94,7 +94,7 @@ async function main() {
   const lead = Number(arg("lead")) || LEAD_MINUTES_DEFAULT;
   const now = arg("now") ? new Date(arg("now")) : new Date();
   const forcedEvent = arg("event");
-  const limit = Number(arg("limit")) || Infinity;
+  const limit = Number(arg("limit")) || 40; // 1回に入れる最大件数(想定外の大量入力を防ぐ上限)
 
   const [official, raw, ledger, platformEventMap] = await Promise.all([
     readSheetAsObjects(sheetId, OFFICIAL_EVENTS_SHEET),
