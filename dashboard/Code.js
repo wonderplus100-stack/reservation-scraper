@@ -448,6 +448,7 @@ function linkEvent(platform, account, platformEventId, rawEventName, officialEve
   } finally {
     lock.releaseLock();
   }
+  clearDashboardCache_(); // 紐づけを変えたら、キャッシュした画面データを捨てて、すぐ反映する
   return { ok: true, officialEventName: String(official.canonicalEventName) };
 }
 
@@ -695,11 +696,54 @@ function doPost(e) {
   return apiResponse_(payload.fn, JSON.stringify(payload.args || []), payload.key);
 }
 
+// 画面データの組み立て(約8秒)の結果を、5分間キャッシュする。ページは5分おきに自動更新するため、
+// 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
+const DASH_CACHE_PREFIX_ = "dashboard_v2";
+const DASH_CACHE_SECONDS_ = 300;
+const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
+
+function getDashboardDataCached_() {
+  const cache = CacheService.getScriptCache();
+  const count = Number(cache.get(DASH_CACHE_PREFIX_ + "_n") || 0);
+  if (count > 0) {
+    const keys = [];
+    for (let i = 0; i < count; i += 1) keys.push(DASH_CACHE_PREFIX_ + "_" + i);
+    const parts = cache.getAll(keys);
+    if (keys.every((k) => parts[k] !== undefined)) {
+      try {
+        return JSON.parse(keys.map((k) => parts[k]).join(""));
+      } catch (err) {
+        // 壊れたキャッシュは使わず、作り直す
+      }
+    }
+  }
+  const data = buildDashboardData_();
+  try {
+    const json = JSON.stringify(data);
+    const values = {};
+    let n = 0;
+    for (let i = 0; i < json.length; i += DASH_CACHE_CHUNK_) values[DASH_CACHE_PREFIX_ + "_" + n++] = json.slice(i, i + DASH_CACHE_CHUNK_);
+    values[DASH_CACHE_PREFIX_ + "_n"] = String(n);
+    cache.putAll(values, DASH_CACHE_SECONDS_);
+  } catch (err) {
+    // キャッシュに保存できなくても、表示は続ける
+  }
+  return data;
+}
+
+function clearDashboardCache_() {
+  const cache = CacheService.getScriptCache();
+  const count = Number(cache.get(DASH_CACHE_PREFIX_ + "_n") || 0);
+  const keys = [DASH_CACHE_PREFIX_ + "_n"];
+  for (let i = 0; i < count; i += 1) keys.push(DASH_CACHE_PREFIX_ + "_" + i);
+  cache.removeAll(keys);
+}
+
 // ダッシュボード側のJSからポーリングして最新化するためのAPI。
 function fetchDashboardData() {
   if (!isAuthorized_()) throw new Error("アクセス権がありません");
   try {
-    return buildDashboardData_();
+    return getDashboardDataCached_();
   } catch (err) {
     // google.script.runはサーバー側の例外を必ずしもwithFailureHandlerに
     // 渡してくれるとは限らない(オブジェクトのシリアライズに失敗すると

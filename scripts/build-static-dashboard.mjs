@@ -23,6 +23,11 @@ body = body.replace(
   '(["upcoming", "past", "unlinked"].includes(new URLSearchParams(location.search).get("tab")) ? new URLSearchParams(location.search).get("tab") : "upcoming")'
 );
 
+// 公開ページでは「今すぐ更新(Peatix)」ボタンを出さない(専用PC側の受け取りの仕組みが動いていないため、
+// 押すと「更新をリクエストしました」のまま止まって見えた)。読み込み中の表示は、待ち時間が分かる文言にする。
+body = body.replace(/読み込み中…/g, "読み込み中…(初回は20秒ほどかかることがあります)");
+const extraStyle = "<style>.update-bar{display:none !important}</style>";
+
 const shim = `<script>
 // google.script.run 互換層: 画面コードはそのまま、Apps Script の JSON API (fetch) を呼ぶ。
 // 共有キーは共有URLの #k=... で受け取り、ブラウザに保存する(ページのソースには含めない)。
@@ -72,6 +77,7 @@ const html = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Wonder+ 集客状況ダッシュボード</title>
+${extraStyle}
 </head>
 <body>
 ${shim}
