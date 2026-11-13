@@ -127,7 +127,11 @@ async function main() {
   console.log(`[${now.toLocaleString("ja-JP")}] 入力の時間帯のイベント: ${due.length}件 / ${commit ? "登録する" : "予定を表示するだけ(登録しない)"}`);
 
   // 入力の時間帯のイベントが無く、未入力一覧の更新も不要なら、whitekeyにはログインしない。
-  if (due.length === 0 && !pendingIsStale()) return;
+  if (due.length === 0 && !pendingIsStale()) {
+    // 動いていることがダッシュボードで分かるよう、「確認した時刻」だけは記録する。
+    await reportStatus(sheetId, { ok: true, rowCount: 0, message: "" });
+    return;
+  }
 
   let wk = null;
   let entered = 0;
