@@ -223,6 +223,10 @@
   <summary><span>データの取得状況</span><span class="source-summary-note" id="sourceSummaryNote"></span></summary>
   <div class="source-rows" id="sourceRows"></div>
 </details>
+<details class="source-panel" id="whitekeyPanel" hidden>
+  <summary><span>whitekeyに入っていない予約</span><span class="source-summary-note" id="whitekeyNote"></span></summary>
+  <div class="source-rows" id="whitekeyRows"></div>
+</details>
 <div class="tabs">
   <button type="button" class="tab-button active" id="tabUpcoming">最新の予定</button>
   <button type="button" class="tab-button" id="tabPast">過去のイベント</button>
@@ -438,7 +442,7 @@
   }
 
   // 媒体コードを画面表示用のラベルに変換する("peatix/Jua Party" → "Peatix/Jua Party" 等)。
-  const PLATFORM_LABELS = { peatix: "Peatix", kokuchpro: "こくちーず", googleForms: "フォーム", tunagate: "つなげーと", jimoty: "ジモティ", evemado: "イベマド", wpBookings: "公式サイト" };
+  const PLATFORM_LABELS = { peatix: "Peatix", kokuchpro: "こくちーず", googleForms: "フォーム", tunagate: "つなげーと", jimoty: "ジモティ", evemado: "イベマド", wpBookings: "公式サイト", whitekey: "whitekey" };
   function formatSource(source) {
     const idx = String(source || "").indexOf("/");
     if (idx === -1) return source || "";
@@ -543,6 +547,7 @@
     { platform: "jimoty", note: "専用PCで実行" },
     { platform: "evemado", note: "専用PCで実行" },
     { platform: "wpBookings", note: "専用PCで実行(公式サイト管理画面にログインが必要)" },
+    { platform: "whitekey", note: "専用PCで実行(開始35分前に、その時点の予約をwhitekeyの受付登録へ自動入力)" },
     { platform: "tunagate", note: "未連携(ログインメールが届かないため取得できていません)", unsupported: true }
   ];
 
@@ -626,6 +631,28 @@
     if (!sourcePanelInitialized) { sourcePanelInitialized = true; panel.open = problems > 0; }
   }
 
+  // whitekeyに入っていない予約(whitekeyにパーティーがない・候補が複数など)を出し続ける。
+  function renderWhitekeyPending(list) {
+    const panel = document.getElementById("whitekeyPanel");
+    const rows = Array.isArray(list) ? list : [];
+    panel.hidden = rows.length === 0;
+    if (rows.length === 0) return;
+    document.getElementById("whitekeyNote").textContent = rows.length + "件";
+    const grouped = {};
+    rows.forEach((r) => {
+      const key = r.eventDate + "|" + r.venue + "|" + r.time + "|" + r.reason;
+      (grouped[key] = grouped[key] || { r, n: 0 }).n += 1;
+    });
+    document.getElementById("whitekeyRows").innerHTML = Object.values(grouped)
+      .sort((a, b) => a.r.eventDate.localeCompare(b.r.eventDate) || a.r.time.localeCompare(b.r.time))
+      .map(({ r, n }) => `
+        <div class="source-row">
+          <span class="source-dot bad"></span>
+          <span class="source-name">${escapeHtml(r.eventDate)} ${escapeHtml(r.venue)} ${escapeHtml(r.time)}</span>
+          <span class="source-detail">${n}件 / ${escapeHtml(r.reason)}</span>
+        </div>`).join("");
+  }
+
   function render(data) {
     try {
       if (data && data.error) {
@@ -634,6 +661,7 @@
       }
       currentData = data;
       renderSources(data.sources);
+      renderWhitekeyPending(data.whitekeyPending);
       document.getElementById("updatedAt").textContent = "最終更新: " + new Date(data.updatedAt).toLocaleString("ja-JP");
       const badge = document.getElementById("unlinkedBadge");
       badge.textContent = String(data.unlinkedTotal || 0);

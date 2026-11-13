@@ -352,3 +352,43 @@ export async function collect() {
   }
   return rows;
 }
+
+// 開始直前の自動入力(scripts/whitekey-sync.mjs)用: 指定した「ハッシュ/開催ID」の参加者だけを、
+// その場でこくちーずPROから取得する。イベントを持つアカウントが分からないため、見つかるまで
+// 設定済みのアカウントを順に試す。返り値は RawData と同じ形の行(platformEventId 付き)。
+export async function collectForPlatformEventIds(platformEventIds) {
+  const accounts = accountsFromEnv();
+  if (accounts.length === 0) throw new Error("こくちーずのログイン情報が .env にありません(KOKUCHPRO_1_PASSWORD 等)");
+  const obtainedAt = new Date().toISOString();
+  const rows = [];
+  const found = new Set();
+  for (const account of accounts) {
+    const pending = platformEventIds.filter((id) => !found.has(id));
+    if (pending.length === 0) break;
+    await withBrowser(`kokuchpro-${account.label}`, async (page) => {
+      await loginWithRetry(page, account);
+      for (const id of pending) {
+        const [eventHash, dateId] = id.split("/");
+        const entries = await downloadReservationNames(page, eventHash, dateId);
+        if (entries.length === 0) continue;
+        found.add(id);
+        for (const entry of entries) {
+          rows.push({
+            platform: "kokuchpro",
+            account: account.label,
+            platformEventId: id,
+            reservationName: entry.name,
+            bookingKey: `kokuchpro|${id}|${entry.bookingNo || entry.name}`,
+            bookingStatus: entry.status,
+            ticketName: entry.ticketName,
+            amount: entry.amount,
+            genderHint: entry.gender,
+            quantity: entry.quantity,
+            obtainedAt
+          });
+        }
+      }
+    });
+  }
+  return rows;
+}

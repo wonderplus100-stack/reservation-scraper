@@ -319,6 +319,7 @@ function buildDashboardData_() {
   return {
     updatedAt: new Date().toISOString(),
     sources: readSourceStatus_(ss),
+    whitekeyPending: readWhitekeyPending_(ss),
     upcomingEvents: forClient(upcomingEvents),
     pastEvents: forClient([...pastKnown, ...pastUnknown]),
     unlinked,
@@ -332,6 +333,21 @@ function buildDashboardData_() {
 // スクレイパーが書き出す SourceStatus(媒体・アカウントごとの最終取得結果)を読む。
 // シート上で日時が Date に変換されていても文字列でも扱えるよう、ISO文字列に揃えて返す
 // (Dateオブジェクトは google.script.run で null になるため)。
+// whitekeyに入れられていない予約(パーティーが無い等)。whitekey自動入力(scripts/whitekey-sync.mjs)が
+// WhitekeyPending シートに書く。
+function readWhitekeyPending_(ss) {
+  const sheet = ss.getSheetByName("WhitekeyPending");
+  if (!sheet) return [];
+  return readObjects_(sheet).map((r) => ({
+    eventDate: String(r.eventDate || ""),
+    venue: String(r.venue || ""),
+    time: String(r.time || ""),
+    platform: String(r.platform || ""),
+    name: String(r.name || ""),
+    reason: String(r.reason || "")
+  }));
+}
+
 function readSourceStatus_(ss) {
   const sheet = ss.getSheetByName(SOURCE_STATUS_SHEET);
   if (!sheet) return [];

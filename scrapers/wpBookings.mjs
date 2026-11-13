@@ -188,3 +188,45 @@ export async function collect() {
   }
   return rows;
 }
+
+// 開始直前の自動入力(scripts/whitekey-sync.mjs)用: 指定したイベント(WordPressの投稿ID)だけの
+// 参加者名簿を、その場で読む。全件取得(約7分)と違い、1イベント数秒で済む。読み取り専用。
+// events: [{ canonicalEventId, postId }]  返り値は RawData と同じ形の行(canonicalEventId 設定済み)。
+export async function collectForEvents(events) {
+  const [account] = accountsFromEnv();
+  if (!account) throw new Error("公式サイト予約の取得が有効ではありません(WP_BOOKINGS_ENABLED=true)");
+  const obtainedAt = new Date().toISOString();
+  return withBrowser(PROFILE_LABEL, async (page) => {
+    const rows = [];
+    for (const { canonicalEventId, postId } of events) {
+      await page.goto(`${ROSTER_URL}&event_id=${postId}`, { waitUntil: "domcontentloaded" });
+      if (await loginRequired(page)) {
+        throw new Error("公式サイトの管理画面のセッションが切れています。再ログインしてください(scripts/wp-relogin.cmd)");
+      }
+      const table = await page.evaluate(() =>
+        [...document.querySelectorAll(".wrap table tbody tr")].map((tr) =>
+          [...tr.children].map((td) => td.textContent.replace(/\s+/g, " ").trim())
+        )
+      );
+      for (const [number, name, reading, attendeesText, ticket, , status] of table) {
+        if (!number || !name || /キャンセル/.test(status || "")) continue;
+        const reservationName = cleanName(name);
+        const detail = {
+          readingKatakana: reading || "",
+          ticketName: ticket || "",
+          amount: (String(ticket).match(/[¥￥]\s*([\d,]+)/) || [])[1]?.replace(/,/g, "") || "",
+          genderHint: /女性/.test(ticket) ? "女性" : /男性/.test(ticket) ? "男性" : "",
+          bookingStatus: status || ""
+        };
+        const key = String(number).replace(/^#/, "");
+        const base = { platform: "wpBookings", account: account.label, canonicalEventId, obtainedAt, ...detail };
+        rows.push({ ...base, reservationName, bookingKey: `wpBookings|${key}` });
+        const attendees = Math.min(Math.max(parseInt(attendeesText, 10) || 1, 1), 20);
+        for (let c = 1; c < attendees; c += 1) {
+          rows.push({ ...base, reservationName: `${reservationName}(同行${c})`, bookingKey: `wpBookings|${key}|c${c}` });
+        }
+      }
+    }
+    return rows;
+  }, { persistent: true });
+}
