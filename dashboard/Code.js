@@ -160,6 +160,53 @@ function buildDashboardData_() {
     );
   }
 
+  // 土曜の昼カフェ会は、公式サイトに「第1部」「第2部」「1部&2部の両方参加(通し)」の3イベントがある。
+  // こくちーずは1つのイベントにチケット(1部のみ/2部のみ/両方参加)が並ぶため、チケット名で正しいイベントに振り分ける。
+  // 通し(両方参加)のお客様は、1部にも2部にも出席するので、通しイベントに加えて1部・2部の人数にも数える
+  // (whitekeyの1部の予約リストにも通しのお客様が入っているため、それに合わせる)。
+  const slotsByDay = new Map(); // "月/日/会場" -> { p1, p2, both } (公式イベントID)
+  const slotOfEvent = new Map(); // 公式イベントID -> "p1" | "p2" | "both"
+  for (const [eventId, g] of eventGroups) {
+    const part = slotPartOf_(g.eventName);
+    if (!part || !g.month || !g.day) continue;
+    const dayKey = `${g.month}/${g.day}/${detectVenueKey_(g.eventName)}`;
+    if (!slotsByDay.has(dayKey)) slotsByDay.set(dayKey, {});
+    const slots = slotsByDay.get(dayKey);
+    if (!slots[part]) slots[part] = eventId;
+    slotOfEvent.set(eventId, { part, dayKey });
+  }
+
+  function routeToSlots_(officialId, row) {
+    let targetId = officialId;
+    const own = slotOfEvent.get(officialId);
+    if (own && row.platform === "kokuchpro") {
+      // こくちーずは、チケット名(「1部のみ」「2部のみ」「1部と2部の両方」)で振り分ける
+      const wanted = ticketPartOf_(row.ticketName);
+      const slots = slotsByDay.get(own.dayKey);
+      if (wanted && slots && slots[wanted]) targetId = slots[wanted];
+    }
+    accumulateRow_(eventGroups.get(targetId), row);
+    const target = slotOfEvent.get(targetId);
+    if (target && target.part === "both") {
+      const slots = slotsByDay.get(target.dayKey);
+      for (const part of ["p1", "p2"]) {
+        if (!slots[part]) continue;
+        const group = eventGroups.get(slots[part]);
+        const personKey = String(row.normalizedName || "").trim();
+        const alreadyThere = group.uniqueNames.has(personKey);
+        accumulateRow_(group, row);
+        const person = group.uniqueNames.get(personKey);
+        if (person && !alreadyThere) {
+          person.viaSet = true; // 「通し」のお客様(画面にバッジを出す)
+          // 料金は通しのイベントで数える(1部・2部で二重に合計しない)
+          person.amount = null;
+          person.amountGuess = false;
+          person.prepaid = false;
+        }
+      }
+    }
+  }
+
   const legacyGroups = new Map(); // 公式サイトに無い旧イベントID(旧スプレッドシート由来等)
   const unlinkedGroups = new Map(); // どの公式イベントにも紐づいていない予約
 
@@ -178,7 +225,7 @@ function buildDashboardData_() {
 
     const officialId = resolveOfficialId_(row);
     if (officialId) {
-      accumulateRow_(eventGroups.get(officialId), row);
+      routeToSlots_(officialId, row);
       continue;
     }
     const ownId = String(row.canonicalEventId || "").trim();
@@ -370,6 +417,24 @@ function buildDashboardData_() {
 // ダミー判定(lib/whitekeyRules.mjs の isDummyName と同じ規則。変える時は両方そろえること)。
 const DUMMY_NAME_PATTERN_ = /ウィル|ウイル|うぃる|ういる|ホワイトキー|ほわいとき|ﾎﾜｲﾄｷｰ|whitekey|wonder|ワンダー|他団体|多団体/i;
 const SYMBOL_ONLY_PATTERN_ = /^[\d\s\-_.・★☆※]+$/;
+// 公式イベント名から、昼カフェ会の「どの部か」を判定する。両方参加(通し)=both / 第2部=p2 / 第1部=p1 / それ以外は空。
+function slotPartOf_(eventName) {
+  const text = String(eventName || "");
+  if (/両方|セット|通し/.test(text)) return "both";
+  if (/第2部/.test(text)) return "p2";
+  if (/第1部/.test(text)) return "p1";
+  return "";
+}
+
+// こくちーずのチケット名(「女性・1部のみ参加…」「男性・2部のみ参加…」「…1部と2部のお得な両方参加…」)から、どの部かを判定する。
+function ticketPartOf_(ticketName) {
+  const text = String(ticketName || "");
+  if (/両方|セット/.test(text)) return "both";
+  if (/2部のみ/.test(text)) return "p2";
+  if (/1部のみ/.test(text)) return "p1";
+  return "";
+}
+
 function isDummyName_(name) {
   const text = String(name || "").normalize("NFKC").trim();
   if (!text) return false;
@@ -803,7 +868,7 @@ function doPost(e) {
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
 // 入力・集計の対象にしない予約の状態(lib/whitekeyRules.mjs の INACTIVE_STATUS と同じ。変える時は両方そろえること)。
 const INACTIVE_STATUS_ = /キャンセル|払い戻し|払戻|返金|無効|取消|不参加/;
-const DASH_CACHE_PREFIX_ = "dashboard_v12"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v13"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 
