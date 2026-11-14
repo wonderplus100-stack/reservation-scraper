@@ -373,7 +373,8 @@
     const label = PLATFORM_LABELS[platform] || platform;
     const paren = account.match(/[(（]([^)）]+)[)）]/);
     const inner = paren ? paren[1] : account;
-    if (platform === "evemado" || platform === "wpBookings" || platform === "whitekey" || !inner) return label;
+    if (platform === "whitekey") return "whitekey入力";
+    if (platform === "evemado" || platform === "wpBookings" || !inner || inner === label) return label;
     if (platform === "googleForms") return inner;
     return `${label} ${inner}`;
   }
