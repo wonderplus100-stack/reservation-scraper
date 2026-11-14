@@ -172,7 +172,7 @@ async function main() {
       }
       // Peatix: 入力対象の種別(カフェ会系・朝活・レギュラー)のイベントだけ、その場で取り直す。
       const eligiblePeatix = platformEventMap.filter(
-        (m) => m.platform === "peatix" && dueIds.has(m.officialEventId) && peatixCategoryOf(due.find((e) => e.canonicalEventId === m.officialEventId)?.canonicalEventName)
+        (m) => m.platform === "peatix" && dueIds.has(m.officialEventId) && peatixCategoryOf(due.find((e) => e.canonicalEventId === m.officialEventId))
       );
       if (eligiblePeatix.length > 0) {
         try {
@@ -182,6 +182,9 @@ async function main() {
           })).filter((i) => i.account);
           const rows = await collectForPeatixEvents(items);
           for (const row of rows) {
+            if (!row.amount) {
+              row.amount = raw.find((r) => r.platform === "peatix" && String(r.platformEventId) === String(row.platformEventId) && r.ticketName === row.ticketName && r.amount)?.amount || "";
+            }
             row.canonicalEventId = eligiblePeatix.find((m) => String(m.platformEventId) === String(row.platformEventId))?.officialEventId;
             freshPeatixIds.add(String(row.platformEventId));
             fresh.push(row);

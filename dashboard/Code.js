@@ -103,12 +103,16 @@ function buildDashboardData_() {
       group.referrerCounts.set(referrerName, (group.referrerCounts.get(referrerName) || 0) + 1);
     }
     const normalizedName = String(row.normalizedName || "").trim();
-    if (normalizedName && !group.uniqueNames.has(normalizedName)) {
+    // 同じ人が複数の取得元に出る場合に備え、その人が出ている取得元を全て覚える
+    // (画面の「Whitekey / Wonder+ / 全体」の切り替えで、取得元の区分ごとに数え直すため)。
+    const existing = normalizedName ? group.uniqueNames.get(normalizedName) : null;
+    if (existing && existing.sources.indexOf(sourceKey) === -1) existing.sources.push(sourceKey);
+    if (normalizedName && !existing) {
       const name = String(row.reservationName || "").trim();
       // カタカナ表記: ふりがな列からの変換値があればそれを使い、なければ
       // (Googleフォーム以外など、ふりがな情報が無い媒体)元の氏名表記のまま。
       const katakana = String(row.readingKatakana || "").trim() || name;
-      group.uniqueNames.set(normalizedName, { name, katakana, referrer: referrerName, source: sourceKey });
+      group.uniqueNames.set(normalizedName, { name, katakana, referrer: referrerName, source: sourceKey, sources: [sourceKey] });
     }
     if (String(row.obtainedAt || "") > group.latestObtainedAt) {
       group.latestObtainedAt = String(row.obtainedAt || "");
@@ -698,7 +702,7 @@ function doPost(e) {
 
 // 画面データの組み立て(約8秒)の結果を、5分間キャッシュする。ページは5分おきに自動更新するため、
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
-const DASH_CACHE_PREFIX_ = "dashboard_v2";
+const DASH_CACHE_PREFIX_ = "dashboard_v3";
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 

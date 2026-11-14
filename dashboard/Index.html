@@ -107,6 +107,9 @@
     cursor: pointer;
   }
   .tab-button.active { background: #175cd3; border-color: #175cd3; color: #fff; }
+  .group-tabs { margin-bottom: 4px; }
+  .group-tabs .tab-button { padding: 6px 16px; font-size: 14px; }
+  .group-note { font-size: 12px; color: #667085; margin: 0 0 10px; min-height: 16px; }
   .tab-badge {
     display: inline-block; margin-left: 6px; min-width: 18px; padding: 1px 6px;
     border-radius: 999px; background: #f04438; color: #fff; font-size: 11px; font-weight: 700;
@@ -182,6 +185,12 @@
   <button type="button" class="tab-button" id="tabPast">過去のイベント</button>
   <button type="button" class="tab-button" id="tabUnlinked">未紐づけ<span class="tab-badge" id="unlinkedBadge" hidden></span></button>
 </div>
+<div class="tabs group-tabs" id="groupTabs" role="tablist" aria-label="集客の区分">
+  <button type="button" class="tab-button active" data-group="all">全体</button>
+  <button type="button" class="tab-button" data-group="whitekey">Whitekey</button>
+  <button type="button" class="tab-button" data-group="wonder">Wonder+</button>
+</div>
+<p class="group-note" id="groupNote"></p>
 <div class="event-picker" id="eventPicker">
   <button type="button" class="event-picker-trigger" id="eventPickerTrigger">
     <span class="event-picker-trigger-text">
@@ -203,11 +212,57 @@
   let activeTab = "<?= initialTab ?>"; // "upcoming" | "past" | "unlinked"(URLの?tab=で指定)
   let selectedEventId = { upcoming: null, past: null };
 
-  function currentEvents() {
-    if (activeTab === "upcoming") return currentData.upcomingEvents || [];
-    if (activeTab === "past") return currentData.pastEvents || [];
-    return [];
+  // ---- 集客の区分(全体 / Whitekey / Wonder+) ----
+  //  全体: すべての取得元を合算
+  //  Whitekey: Wonder+公式サイト(公式の予約)と、こくちーず(Whitekey・Enjoyjapanのアカウント)
+  //  Wonder+: それ以外の集客(Peatix・イベマド・ジモティ・Googleフォーム・つなげーと など)
+  const GROUP_NOTES = {
+    all: "すべての取得元の合算です。",
+    whitekey: "Wonder+公式サイトの予約と、こくちーず(Whitekey・Enjoyjapan)の予約です。",
+    wonder: "Whitekey以外の集客(Peatix・イベマド・ジモティ・Googleフォームなど)です。"
+  };
+  let viewGroup = "all";
+  try { viewGroup = ["all", "whitekey", "wonder"].includes(localStorage.getItem("wpdash_group")) ? localStorage.getItem("wpdash_group") : "all"; } catch (e) {}
+
+  function groupOfSource(source) {
+    const platform = String(source || "").split("/")[0];
+    return platform === "wpBookings" || platform === "kokuchpro" ? "whitekey" : "wonder";
   }
+
+  // イベントを、選んだ区分の取得元だけで数え直した形にする(氏名ベースの重複除外は区分の中で行う)。
+  function viewOfEvent(event) {
+    if (viewGroup === "all") return event;
+    const names = (event.names || []).filter((n) => (n.sources && n.sources.length ? n.sources : [n.source]).some((s) => groupOfSource(s) === viewGroup));
+    return {
+      ...event,
+      names,
+      uniqueCount: names.length,
+      sourceCounts: (event.sourceCounts || []).filter((s) => groupOfSource(s.source) === viewGroup),
+      referrerCounts: []
+    };
+  }
+
+  function currentEvents() {
+    let events = [];
+    if (activeTab === "upcoming") events = currentData.upcomingEvents || [];
+    if (activeTab === "past") events = currentData.pastEvents || [];
+    return viewGroup === "all" ? events : events.map(viewOfEvent);
+  }
+
+  function renderGroupTabs() {
+    document.querySelectorAll("#groupTabs .tab-button").forEach((b) => b.classList.toggle("active", b.dataset.group === viewGroup));
+    document.getElementById("groupNote").textContent = GROUP_NOTES[viewGroup];
+    document.getElementById("groupTabs").hidden = activeTab === "unlinked";
+    document.getElementById("groupNote").hidden = activeTab === "unlinked";
+  }
+
+  document.querySelectorAll("#groupTabs .tab-button").forEach((b) => {
+    b.addEventListener("click", () => {
+      viewGroup = b.dataset.group;
+      try { localStorage.setItem("wpdash_group", viewGroup); } catch (e) {}
+      renderActiveView();
+    });
+  });
 
   // 現在のタブに応じて、イベント選択+詳細(最新/過去)か、未紐づけ画面かを描画する。
   function renderActiveView() {
@@ -215,6 +270,7 @@
     document.getElementById("tabPast").classList.toggle("active", activeTab === "past");
     document.getElementById("tabUnlinked").classList.toggle("active", activeTab === "unlinked");
     const isUnlinked = activeTab === "unlinked";
+    renderGroupTabs();
     document.getElementById("eventPicker").hidden = isUnlinked;
     document.getElementById("detail").hidden = isUnlinked;
     document.getElementById("unlinkedView").hidden = !isUnlinked;

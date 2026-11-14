@@ -187,7 +187,19 @@ async function collectEventsFromDom(page) {
       if (samples.length < 2) {
         samples.push((container ? container.textContent || "" : "").replace(/\s+/g, " ").trim().slice(0, 500));
       }
-      results.push({ eventId: idMatch[1], title, applied, dateYear, dateMonth, dateDay });
+      // このイベントだけのカード(他のイベントのリンクを含まない最大の親要素)から、チケットごとの
+      // 設定金額を読む。カードには「0 / 15 男性 参加チケット 事前決済 ¥1,700 ¥0」の形で並ぶ
+      // (チケット名の横が設定金額、その次が売上)。名前自体に「1700円」と入っている現地決済は、そちらを使う。
+      let card = link;
+      while (card.parentElement && card.parentElement.querySelectorAll('a[href*="/list_sales"]').length === 1) card = card.parentElement;
+      const cardText = (card.textContent || "").replace(/\s+/g, " ");
+      const tickets = [];
+      for (const m of cardText.matchAll(/\d+\s*\/\s*\d+\s+(.+?)\s+[¥￥]\s*([\d,]+)\s+[¥￥]\s*[\d,]+/g)) {
+        const name = m[1].trim();
+        const inName = name.match(/([\d,]+)\s*円/);
+        tickets.push({ name, price: Number((inName ? inName[1] : m[2]).replace(/,/g, "")) });
+      }
+      results.push({ eventId: idMatch[1], title, applied, dateYear, dateMonth, dateDay, tickets });
     }
     // 重複除去(同じイベントが複数箇所にリンクされている場合がある)
     const byId = new Map(results.map((r) => [r.eventId, r]));
@@ -393,6 +405,15 @@ export async function ensureLoggedIn(accountLabel, { onStatus, timeoutMs = 15 * 
   }
 }
 
+// チケット名(参加者リストCSVの表記)から、イベントのチケット設定の金額を引く。空白・全角空白の違いは無視する。
+function ticketPrice(tickets, ticketName) {
+  const norm = (t) => String(t || "").replace(/[\s　]+/g, "");
+  const target = norm(ticketName);
+  if (!target || !Array.isArray(tickets)) return "";
+  const hit = tickets.find((t) => norm(t.name) === target) || tickets.find((t) => norm(t.name).includes(target) || target.includes(norm(t.name)));
+  return hit && hit.price ? String(hit.price) : "";
+}
+
 async function scrapeAccount(account) {
   return withBrowser(`peatix-${account.label}`, async (page, { hasSavedState }) => {
     // ユーザーからの確認事項: Peatixはパスワードだけでのログインを常に
@@ -432,7 +453,8 @@ async function scrapeAccount(account) {
           bookingKey: `peatix|${event.eventId}|${attendee.orderKey || attendee.name}`,
           bookingStatus: attendee.status,
           ticketName: attendee.ticketName,
-          amount: attendee.amount
+          // 金額は、イベントのチケット設定(チケット名の横の設定金額)を優先し、無ければチケット名の「○円」。
+          amount: ticketPrice(event.tickets, attendee.ticketName) || attendee.amount
         });
       }
     }

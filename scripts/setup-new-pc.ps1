@@ -41,7 +41,7 @@ Write-Host "登録しました: WonderPlus-PeatixScrape"
 
 
 Write-Host "== whitekey自動入力のタスク(5分おき・既定は無効) =="
-$wkVbs = Join-Path $root "scriptsun-whitekey-sync-hidden.vbs"
+$wkVbs = Join-Path $root "scripts\run-whitekey-sync-hidden.vbs"
 $wkAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('//B //Nologo "' + $wkVbs + '"')
 $wkTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes 5)
 $wkSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
