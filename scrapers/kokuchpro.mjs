@@ -318,6 +318,17 @@ async function scrapeAccount(account) {
   });
 }
 
+// アカウントごとの上限時間。1つのアカウントが遅くても、全体の上限(run.mjs)に達して
+// 他のアカウントの取得結果まで失われないよう、全体より少し短く切る。
+const ACCOUNT_TIMEOUT_MS = 18 * 60 * 1000;
+function withAccountTimeout(promise, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}: ${ACCOUNT_TIMEOUT_MS / 60000}分以内に取得が終わりませんでした`)), ACCOUNT_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export async function collect() {
   const accounts = accountsFromEnv();
   const obtainedAt = new Date().toISOString();
@@ -329,7 +340,7 @@ export async function collect() {
   const results = await Promise.all(
     accounts.map(async (account) => {
       try {
-        const reservations = await scrapeAccount(account);
+        const reservations = await withAccountTimeout(scrapeAccount(account), account.label);
         reportSource("kokuchpro", account.label, { ok: true });
         return { account, reservations };
       } catch (err) {
