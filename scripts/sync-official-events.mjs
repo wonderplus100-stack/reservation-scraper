@@ -170,7 +170,24 @@ async function fillEventFees(sheetId, events) {
       })
     );
   }
-  console.log(`参加費を読み取りました: ${filled}/${targets.length}件(引き継ぎ ${feeById.size}件)`);
+  // 終了したイベントのページは参加費の表示が無いことがある。その場合は、同じ名前(日付を除く)の
+  // 別の回の参加費を目安にする(ダッシュボードでは「約」付きの推定として表示される)。
+  const seriesKey = (event) => String(event.canonicalEventName || "").replace(/^\d{1,2}\/\d{1,2}\s+/, "");
+  const bySeries = new Map();
+  for (const event of events) {
+    if (event.maleFee !== undefined && event.maleFee !== "" && !bySeries.has(seriesKey(event))) bySeries.set(seriesKey(event), event);
+  }
+  let borrowed = 0;
+  for (const event of events) {
+    if (event.maleFee !== undefined && event.maleFee !== "") continue;
+    const similar = bySeries.get(seriesKey(event));
+    if (similar) {
+      event.maleFee = similar.maleFee;
+      event.femaleFee = similar.femaleFee;
+      borrowed += 1;
+    }
+  }
+  console.log(`参加費を読み取りました: ${filled}/${targets.length}件(引き継ぎ ${feeById.size}件、同じ名前の回から借用 ${borrowed}件)`);
 }
 
 async function main() {
