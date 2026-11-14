@@ -128,6 +128,8 @@ function buildDashboardData_() {
       if (info.amount !== null && (existing.amount === null || existing.amount === undefined || (existing.amountGuess && !info.amountGuess))) {
         existing.amount = info.amount;
         existing.amountGuess = info.amountGuess;
+        existing.prepaid = info.prepaid;
+        existing.paidAmount = info.paidAmount;
       }
     }
     if (String(row.obtainedAt || "") > group.latestObtainedAt) {
@@ -409,6 +411,7 @@ function personInfo_(group, row) {
   }
   let amount = parseAmount_(row.amount);
   let amountGuess = false;
+  let paidAmount = null; // 事前決済で支払い済みの金額(表示の補足用)
   if (amount === null) {
     const fee = gender === "女性" ? group.femaleFee : group.maleFee;
     if (fee !== null && fee !== undefined) {
@@ -416,7 +419,14 @@ function personInfo_(group, row) {
       amountGuess = true;
     }
   }
-  return { amount, amountGuess, gender, genderGuess };
+  // 事前決済(チケット名に「事前決済」を含む)は支払い済みなので、料金は0円(lib/whitekeyPlan.mjs の isPrepaid と同じ)。
+  const prepaid = /事前決済/.test(String(row.ticketName || ""));
+  if (prepaid) {
+    paidAmount = amount;
+    amount = 0;
+    amountGuess = false;
+  }
+  return { amount, amountGuess, prepaid, paidAmount, gender, genderGuess };
 }
 
 function judgeGender_(row) {
@@ -789,7 +799,7 @@ function doPost(e) {
 
 // 画面データの組み立て(約8秒)の結果を、5分間キャッシュする。ページは5分おきに自動更新するため、
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
-const DASH_CACHE_PREFIX_ = "dashboard_v9"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v11"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 

@@ -257,6 +257,7 @@
   .guest-tags { display: flex; gap: 5px; align-items: center; justify-content: flex-end; }
   .guest-tag.gender-tag { min-width: 58px; text-align: center; box-sizing: border-box; }
   .guest-tag.amount { min-width: 74px; text-align: right; box-sizing: border-box; }
+  .guest-tag.amount.prepaid { background: #f2f4f7; color: #475467; }
   .guest-tag.guess { border: 1px dashed currentColor; background: #fff; font-weight: 600; }
   .guest-sub { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 11.5px; color: #667085; }
   .guest-tag { font-size: 11.5px; font-weight: 700; line-height: 1; padding: 4px 8px; border-radius: 6px; white-space: nowrap; }
@@ -368,6 +369,11 @@
   }
   function amountTag(n) {
     if (typeof n.amount !== "number") return "";
+    // 事前決済は支払い済みなので、whitekeyの料金は0円(元の支払額は、ポインタを乗せると出る)
+    if (n.prepaid) {
+      const paid = typeof n.paidAmount === "number" ? `支払い済み: ${n.paidAmount.toLocaleString("ja-JP")}円` : "支払い済み";
+      return `<span class="guest-tag amount prepaid" title="${paid}">0円(事前決済)</span>`;
+    }
     const yen = n.amount.toLocaleString("ja-JP") + "円";
     return n.amountGuess
       ? `<span class="guest-tag amount guess" title="媒体に金額が無いため、公式イベントページの参加費から推定しています">約${yen}</span>`
@@ -670,7 +676,7 @@
           <span class="stat-chip male">男性 <b>${event.names.filter((n) => n.gender === "男性").length}</b></span>
           <span class="stat-chip female">女性 <b>${event.names.filter((n) => n.gender === "女性").length}</b></span>
           <span class="stat-chip">不明 <b>${event.names.filter((n) => !n.gender).length}</b></span>
-          ${amountSum ? `<span class="stat-chip sum">金額合計(目安) <b>${amountSum.toLocaleString("ja-JP")}円</b></span>` : ""}
+          ${amountSum ? `<span class="stat-chip sum">当日の料金合計(目安) <b>${amountSum.toLocaleString("ja-JP")}円</b></span>` : ""}
         </div>
         <div class="stat-row">
           ${event.sourceCounts.map((s) => `<span class="src-badge ${sourceClass(s.source)}">${escapeHtml(shortSource(s.source))} ${s.count}件</span>`).join("")}
