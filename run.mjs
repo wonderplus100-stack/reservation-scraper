@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { normalizeEventName, normalizeName } from "./lib/normalizeName.mjs";
-import { matchOfficialEvent } from "./lib/officialEventMatcher.mjs";
+import { isOldYearByWeekday, matchOfficialEvent } from "./lib/officialEventMatcher.mjs";
 import {
   RAW_DATA_SHEET,
   UNMAPPED_SHEET,
@@ -61,6 +61,13 @@ function withTimeout(promise, ms, label) {
     timer = setTimeout(() => reject(new Error(`${label}: ${ms / 1000}秒でタイムアウトしました`)), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// 去年以前のイベントの文言かどうか。
+function isStaleEventText(text) {
+  const year = String(text || "").match(/(\d{4})年/);
+  if (year && Number(year[1]) < new Date().getFullYear()) return true;
+  return isOldYearByWeekday(text);
 }
 
 function parseOnlyArg() {
@@ -231,6 +238,10 @@ async function main() {
         }
       }
     }
+
+    // 去年以前の開催回(「2025年11月11日」のように年が明記されている / 曜日が去年の暦と合う)は、今年の公式
+    // イベントに存在しないのが当然なので、「未紐づけ」に積まず取り込まない(今年の未対応分が埋もれるため)。
+    if (!canonicalEventId && isStaleEventText(row.rawEventName)) continue;
 
     if (!canonicalEventId) {
       unmapped.push(row);
