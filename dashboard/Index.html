@@ -171,6 +171,53 @@
   .source-detail { flex: 1 1 200px; min-width: 0; color: #475467; line-height: 1.5; overflow-wrap: anywhere; }
   .source-detail .source-problem { color: #b42318; font-weight: 600; }
 
+  /* 取得状況(コンパクト版): 色つきの札を並べ、押すと下に詳しい状況を出す */
+  .chip-panel { padding: 10px 12px; }
+  .source-head { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; font-size: 13px; font-weight: 700; color: #344054; margin-bottom: 8px; }
+  .source-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .source-chip {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; line-height: 1.2;
+    padding: 6px 10px; border-radius: 999px; border: 1px solid #d0d5dd; background: #f2f4f7; color: #475467;
+    cursor: pointer; font-family: inherit;
+  }
+  .source-chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #98a2b3; }
+  .source-chip.ok { background: #ecfdf3; border-color: #abefc6; color: #067647; }
+  .source-chip.ok::before { background: #12b76a; }
+  .source-chip.warn { background: #fffaeb; border-color: #fedf89; color: #b54708; }
+  .source-chip.warn::before { background: #f79009; }
+  .source-chip.bad { background: #fef3f2; border-color: #fda29b; color: #b42318; }
+  .source-chip.bad::before { background: #f04438; }
+  .source-chip.selected { outline: 2px solid #175cd3; outline-offset: 1px; }
+  .source-detail-box { margin-top: 8px; padding: 8px 10px; background: #f9fafb; border-radius: 8px; font-size: 12px; line-height: 1.6; color: #475467; overflow-wrap: anywhere; }
+  .source-detail-box .source-problem { color: #b42318; font-weight: 600; }
+
+  /* 予約者の名簿: 1名=2段(上段=氏名と性別・金額、下段=よみがなと取得元) */
+  .stat-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .stat-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 9px; border-radius: 999px; background: #f2f4f7; color: #344054; }
+  .stat-chip b { font-size: 13px; }
+  .stat-chip.male { background: #e8f1ff; color: #175cd3; }
+  .stat-chip.female { background: #fdecf3; color: #c11574; }
+  .stat-chip.sum { background: #ecfdf3; color: #067647; }
+  .guest-list { margin-top: 6px; max-height: 520px; overflow-y: auto; border-top: 1px solid #eee; }
+  .guest { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; padding: 9px 6px; border-bottom: 1px solid #f0f1f3; }
+  .guest:nth-child(even) { background: #fafbfc; }
+  .guest-name { font-size: 14.5px; font-weight: 700; color: #101828; line-height: 1.35; overflow-wrap: anywhere; }
+  .guest-tags { display: flex; gap: 5px; align-items: center; justify-content: flex-end; }
+  .guest-sub { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 11.5px; color: #667085; }
+  .guest-tag { font-size: 11.5px; font-weight: 700; line-height: 1; padding: 4px 8px; border-radius: 6px; white-space: nowrap; }
+  .guest-tag.male { background: #e8f1ff; color: #175cd3; }
+  .guest-tag.female { background: #fdecf3; color: #c11574; }
+  .guest-tag.unknown { background: #f2f4f7; color: #667085; font-weight: 600; }
+  .guest-tag.amount { background: #ecfdf3; color: #067647; }
+  .src-badge { font-size: 11px; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: 999px; white-space: nowrap; }
+  .src-whitekey { background: #e8f1ff; color: #175cd3; }
+  .src-official { background: #e6f7ec; color: #067647; }
+  .src-peatix { background: #fff1e0; color: #b54708; }
+  .src-form { background: #f1eaff; color: #6941c6; }
+  .src-evemado { background: #e0f5f5; color: #0e7090; }
+  .src-other { background: #f2f4f7; color: #475467; }
+  .guest-ref { color: #175cd3; }
+
   #copySource { position: absolute; left: -9999px; top: -9999px; }
 </style>
 
@@ -180,10 +227,11 @@
   <button id="updateNowButton">今すぐ更新(Peatix)</button>
   <span class="update-status" id="updateStatusText"></span>
 </div>
-<details class="source-panel" id="sourcePanel">
-  <summary><span>データの取得状況</span><span class="source-summary-note" id="sourceSummaryNote"></span></summary>
-  <div class="source-rows" id="sourceRows"></div>
-</details>
+<div class="source-panel chip-panel" id="sourcePanel">
+  <div class="source-head"><span>データの取得状況</span><span class="source-summary-note" id="sourceSummaryNote"></span></div>
+  <div class="source-chips" id="sourceChips"></div>
+  <div class="source-detail-box" id="sourceDetailBox" hidden></div>
+</div>
 <details class="source-panel" id="whitekeyPanel" hidden>
   <summary><span>whitekeyに入っていない予約</span><span class="source-summary-note" id="whitekeyNote"></span></summary>
   <div class="source-rows" id="whitekeyRows"></div>
@@ -258,12 +306,35 @@
   // 氏名の横に出す、性別と金額。性別が媒体から分からない場合は「不明(男)」と出す
   // (whitekeyへの自動入力では、分からない時は男性として入力するため)。
   function genderTag(n) {
-    if (n.gender === "女性") return '<span class="gender female">女性</span>';
-    if (n.gender === "男性") return '<span class="gender male">男性</span>';
-    return '<span class="gender unknown" title="媒体に性別の情報がありません(自動入力では男性として入力されます)">不明(男)</span>';
+    if (n.gender === "女性") return '<span class="guest-tag female">女性</span>';
+    if (n.gender === "男性") return '<span class="guest-tag male">男性</span>';
+    return '<span class="guest-tag unknown" title="媒体に性別の情報がありません(自動入力では男性として入力されます)">不明(男)</span>';
   }
   function amountTag(n) {
-    return typeof n.amount === "number" ? `<span class="amount">${n.amount.toLocaleString("ja-JP")}円</span>` : "";
+    return typeof n.amount === "number" ? `<span class="guest-tag amount">${n.amount.toLocaleString("ja-JP")}円</span>` : "";
+  }
+
+  // 取得元の短い名前("kokuchpro/こくちーずPRO(Whitekey)" → "こくちーず Whitekey" 等)と、色分けのクラス。
+  function shortSource(source) {
+    const idx = String(source || "").indexOf("/");
+    const platform = idx === -1 ? String(source || "") : source.slice(0, idx);
+    const account = idx === -1 ? "" : source.slice(idx + 1);
+    const label = PLATFORM_LABELS[platform] || platform;
+    const paren = account.match(/[(（]([^)）]+)[)）]/);
+    const inner = paren ? paren[1] : account;
+    if (platform === "evemado" || platform === "wpBookings" || platform === "whitekey" || !inner) return label;
+    if (platform === "googleForms") return inner;
+    return `${label} ${inner}`;
+  }
+  function sourceClass(source) {
+    const text = String(source || "");
+    const platform = text.split("/")[0];
+    if (platform === "wpBookings") return "src-official";
+    if (platform === "kokuchpro") return /whitekey|enjoy/i.test(text) ? "src-whitekey" : "src-other";
+    if (platform === "peatix") return "src-peatix";
+    if (platform === "googleForms") return "src-form";
+    if (platform === "evemado") return "src-evemado";
+    return "src-other";
   }
 
   function currentEvents() {
@@ -525,32 +596,34 @@
       return;
     }
     const referrerCounts = event.referrerCounts || [];
+    const amountSum = event.names.reduce((sum, n) => sum + (typeof n.amount === "number" ? n.amount : 0), 0);
     container.innerHTML = `
       <div class="event-card">
         <p class="event-name">${escapeHtml(event.displayName)}</p>
         <div class="totals">
           <span class="totals-count">${event.uniqueCount}</span>
           <span class="totals-unit">名</span>
-          <span class="totals-label">(氏名ベースの重複除外)</span>
+          <span class="totals-label">(重複を除いた人数)</span>
         </div>
-        <div class="source-list">
-          ${event.sourceCounts.map((s) => `<span>${escapeHtml(formatSource(s.source))}: ${s.count}件</span>`).join("")}
+        <div class="stat-row">
+          <span class="stat-chip male">男性 <b>${event.names.filter((n) => n.gender === "男性").length}</b></span>
+          <span class="stat-chip female">女性 <b>${event.names.filter((n) => n.gender === "女性").length}</b></span>
+          <span class="stat-chip">不明 <b>${event.names.filter((n) => !n.gender).length}</b></span>
+          ${amountSum ? `<span class="stat-chip sum">金額合計(判明分) <b>${amountSum.toLocaleString("ja-JP")}円</b></span>` : ""}
         </div>
-        ${referrerCounts.length ? `
-          <div class="source-list referrer-list">
-            ${referrerCounts.map((r) => `<span>担当: ${escapeHtml(r.referrer)}: ${r.count}件</span>`).join("")}
-          </div>
-        ` : ""}
-        <div class="name-list-head">
-          <span>お客様名簿(取得元・紹介者を併記)</span>
+        <div class="stat-row">
+          ${event.sourceCounts.map((s) => `<span class="src-badge ${sourceClass(s.source)}">${escapeHtml(shortSource(s.source))} ${s.count}件</span>`).join("")}
+          ${referrerCounts.map((r) => `<span class="stat-chip">担当 ${escapeHtml(r.referrer)} ${r.count}件</span>`).join("")}
         </div>
-        <div class="name-list">
+        <div class="guest-list">
           ${event.names.map((n) => `
-            <div class="name-row">
-              <span class="name-main">${escapeHtml(n.name)}${n.katakana && n.katakana !== n.name ? `<span class="katakana">(${escapeHtml(n.katakana)})</span>` : ""}${genderTag(n)}${amountTag(n)}</span>
-              <span class="name-meta">
-                <span class="source-tag">${escapeHtml(formatSource(n.source))}</span>
-                ${n.referrer ? `<span class="referrer">${escapeHtml(n.referrer)}</span>` : ""}
+            <div class="guest">
+              <span class="guest-name">${escapeHtml(n.name)}</span>
+              <span class="guest-tags">${genderTag(n)}${amountTag(n)}</span>
+              <span class="guest-sub">
+                <span class="src-badge ${sourceClass(n.source)}">${escapeHtml(shortSource(n.source))}</span>
+                ${n.katakana && n.katakana !== n.name ? `<span>${escapeHtml(n.katakana)}</span>` : ""}
+                ${n.referrer ? `<span class="guest-ref">紹介: ${escapeHtml(n.referrer)}</span>` : ""}
               </span>
             </div>
           `).join("") || '<div class="empty" style="padding:8px 4px;">予約者名がありません</div>'}
@@ -607,7 +680,7 @@
     return "bad";
   }
 
-  let sourcePanelInitialized = false;
+  let selectedSourceKey = null; // 取得状況で押された札(5分ごとの再描画でも開いたままにする)
   function renderSources(sources) {
     const now = Date.now();
     const rows = [];
@@ -615,7 +688,7 @@
     (sources || []).forEach((row) => { seen.add(row.platform); rows.push(row); });
     const missing = EXPECTED_SOURCES.filter((e) => !seen.has(e.platform));
     const levelRank = { bad: 2, warn: 1, ok: 0 };
-    const html = [];
+    const items = []; // { key, label, level, detail }
     let worst = "ok";
     let problems = 0;
 
@@ -631,34 +704,49 @@
       if (row.status === "ok") line += ` / 取得 ${row.rowCount}件`;
       if (attempt) line += ` / 最終確認 ${describeAge(now - attempt)}`;
       if (row.runner) line += ` / 実行元: ${row.runner}`;
-      html.push(`
-        <div class="source-row">
-          <span class="source-dot ${level}"></span>
-          <span class="source-name">${escapeHtml(PLATFORM_LABELS[row.platform] || row.platform)}/${escapeHtml(row.account)}</span>
-          <span class="source-detail">${escapeHtml(line)}
-            ${row.status === "error" ? `<br><span class="source-problem">${escapeHtml(friendlyProblem(row.message))}</span>` : ""}
-            ${level !== "ok" && row.status !== "error" ? `<br><span class="source-problem">更新が止まっている可能性があります。</span>` : ""}
-            ${expected && expected.note ? `<br>${escapeHtml(expected.note)}` : ""}
-          </span>
-        </div>`);
+      items.push({
+        key: row.platform + "/" + row.account,
+        label: shortSource(row.platform + "/" + row.account),
+        level,
+        detail: `<b>${escapeHtml(PLATFORM_LABELS[row.platform] || row.platform)}/${escapeHtml(row.account)}</b><br>${escapeHtml(line)}`
+          + (row.status === "error" ? `<br><span class="source-problem">${escapeHtml(friendlyProblem(row.message))}</span>` : "")
+          + (level !== "ok" && row.status !== "error" ? `<br><span class="source-problem">更新が止まっている可能性があります。</span>` : "")
+          + (expected && expected.note ? `<br>${escapeHtml(expected.note)}` : "")
+      });
     });
     missing.forEach((e) => {
       if (!e.unsupported) { problems += 1; worst = "bad"; }
-      html.push(`
-        <div class="source-row">
-          <span class="source-dot ${e.unsupported ? "" : "bad"}"></span>
-          <span class="source-name">${escapeHtml(PLATFORM_LABELS[e.platform] || e.platform)}</span>
-          <span class="source-detail">${e.unsupported ? "" : '<span class="source-problem">取得結果の記録がありません(まだ一度も実行されていません)。</span><br>'}${escapeHtml(e.note)}</span>
-        </div>`);
+      items.push({
+        key: e.platform,
+        label: PLATFORM_LABELS[e.platform] || e.platform,
+        level: e.unsupported ? "none" : "bad",
+        detail: `<b>${escapeHtml(PLATFORM_LABELS[e.platform] || e.platform)}</b><br>`
+          + (e.unsupported ? "" : '<span class="source-problem">取得結果の記録がありません(まだ一度も実行されていません)。</span><br>')
+          + escapeHtml(e.note)
+      });
     });
 
     const note = document.getElementById("sourceSummaryNote");
     note.className = "source-summary-note " + (problems === 0 ? "ok" : worst);
-    note.textContent = problems === 0 ? "すべて正常に取得できています" : `${problems}件の媒体で取得に問題があります(人数が実際より少ない可能性があります)`;
-    document.getElementById("sourceRows").innerHTML = html.join("");
-    const panel = document.getElementById("sourcePanel");
-    panel.classList.toggle("has-problem", problems > 0);
-    if (!sourcePanelInitialized) { sourcePanelInitialized = true; panel.open = problems > 0; }
+    note.textContent = problems === 0 ? "すべて正常" : `${problems}件に問題あり(人数が実際より少ない可能性があります)`;
+    const chips = document.getElementById("sourceChips");
+    chips.innerHTML = items.map((it, i) => `<button type="button" class="source-chip ${it.level}${it.key === selectedSourceKey ? " selected" : ""}" data-i="${i}">${escapeHtml(it.label)}</button>`).join("");
+    const box = document.getElementById("sourceDetailBox");
+    const showDetail = () => {
+      const it = items.find((x) => x.key === selectedSourceKey);
+      box.hidden = !it;
+      if (it) box.innerHTML = it.detail;
+      chips.querySelectorAll(".source-chip").forEach((c) => c.classList.toggle("selected", items[Number(c.dataset.i)].key === selectedSourceKey));
+    };
+    chips.querySelectorAll(".source-chip").forEach((c) => {
+      c.addEventListener("click", () => {
+        const key = items[Number(c.dataset.i)].key;
+        selectedSourceKey = selectedSourceKey === key ? null : key; // もう一度押すと閉じる
+        showDetail();
+      });
+    });
+    showDetail();
+    document.getElementById("sourcePanel").classList.toggle("has-problem", problems > 0);
   }
 
   // whitekeyに入っていない予約(whitekeyにパーティーがない・候補が複数など)を出し続ける。
