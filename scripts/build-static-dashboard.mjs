@@ -36,12 +36,14 @@ const shim = `<script>
   const WRITE_FUNCTIONS = ["linkEvent", "requestPeatixUpdate"];
   const hashKey = new URLSearchParams(location.hash.slice(1)).get("k");
   try { if (hashKey) localStorage.setItem("wpdash_key", hashKey); } catch (e) {}
-  if (hashKey) history.replaceState(null, "", location.pathname + location.search);
+  // 鍵(#k=...)はURLに残す。消すと、アドレスバーからURLをコピーして別のPCで開いた時に鍵が無く、
+  // 一覧が空のままになる(2026-11-14 報告)。#以降はサーバーに送られない。
   let key = hashKey || "";
   try { key = key || localStorage.getItem("wpdash_key") || ""; } catch (e) {}
+  if (key && !hashKey) { try { history.replaceState(null, "", location.pathname + location.search + "#k=" + encodeURIComponent(key)); } catch (e) {} }
 
   async function call(fn, args) {
-    if (!key) throw new Error("共有URL(鍵つき)から開いてください");
+    if (!key) throw new Error("このURLには鍵がありません。鍵つきの共有URL(…/#k=〜)で開いてください。");
     let res;
     if (WRITE_FUNCTIONS.includes(fn)) {
       // text/plain にすると事前確認(プリフライト)なしで送れる。

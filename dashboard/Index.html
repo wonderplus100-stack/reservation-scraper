@@ -229,6 +229,7 @@
 
 <h1>Wonder+ 集客状況ダッシュボード</h1>
 <div class="updated-at" id="updatedAt"></div>
+<div id="loadError" hidden style="margin:10px 0;padding:12px 14px;border:1px solid #f4b4ae;background:#fef3f2;color:#b42318;border-radius:10px;font-size:14px;line-height:1.6;"></div>
 <div class="update-bar">
   <button id="updateNowButton">今すぐ更新(Peatix)</button>
   <span class="update-status" id="updateStatusText"></span>
@@ -798,6 +799,7 @@
         return;
       }
       currentData = data;
+      document.getElementById("loadError").hidden = true;
       renderSources(data.sources);
       renderWhitekeyPending(data.whitekeyPending);
       document.getElementById("updatedAt").textContent = "最終更新: " + new Date(data.updatedAt).toLocaleString("ja-JP");
@@ -814,7 +816,12 @@
     google.script.run
       .withSuccessHandler(render)
       .withFailureHandler((err) => {
-        document.getElementById("updatedAt").textContent = "読み込みエラー: " + (err && err.message ? err.message : err);
+        const message = err && err.message ? err.message : String(err);
+        document.getElementById("updatedAt").textContent = "読み込みエラー: " + message;
+        // 小さな文字では気づけないため、赤い枠で目立たせる(別PCで鍵なしのURLを開いた時など)。
+        const box = document.getElementById("loadError");
+        box.textContent = "データを読み込めませんでした。" + message;
+        box.hidden = false;
       })
       .fetchDashboardData();
   }
