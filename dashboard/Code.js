@@ -114,15 +114,21 @@ function buildDashboardData_() {
       const katakana = String(row.readingKatakana || "").trim() || name;
       // 金額と性別(媒体のチケット名・性別欄から判断。分からない時は空)。
       // 自動入力で男女を判定する時と同じ考え方で表示する(分からなければ男性として入力される)。
-      const amount = parseAmount_(row.amount);
       group.uniqueNames.set(normalizedName, {
         name, katakana, referrer: referrerName, source: sourceKey, sources: [sourceKey],
-        amount, gender: judgeGender_(row)
+        ...personInfo_(group, row)
       });
     } else if (existing) {
-      // 同じ人の別の行に金額・性別があれば補う
-      if (existing.amount === null || existing.amount === undefined) existing.amount = parseAmount_(row.amount);
-      if (!existing.gender) existing.gender = judgeGender_(row);
+      // 同じ人の別の行に、媒体の正しい金額・性別があれば、推定値より優先して補う
+      const info = personInfo_(group, row);
+      if (info.gender && (!existing.gender || (existing.genderGuess && !info.genderGuess))) {
+        existing.gender = info.gender;
+        existing.genderGuess = info.genderGuess;
+      }
+      if (info.amount !== null && (existing.amount === null || existing.amount === undefined || (existing.amountGuess && !info.amountGuess))) {
+        existing.amount = info.amount;
+        existing.amountGuess = info.amountGuess;
+      }
     }
     if (String(row.obtainedAt || "") > group.latestObtainedAt) {
       group.latestObtainedAt = String(row.obtainedAt || "");
@@ -144,7 +150,10 @@ function buildDashboardData_() {
         eventId,
         eventName: String(official.canonicalEventName || eventId),
         month: Number(official.month) || null,
-        day: Number(official.day) || null
+        day: Number(official.day) || null,
+        // 公式イベントページの男性・女性の参加費(媒体に金額が無い予約の、金額の目安に使う)
+        maleFee: parseAmount_(official.maleFee),
+        femaleFee: parseAmount_(official.femaleFee)
       })
     );
   }
@@ -378,6 +387,38 @@ function parseAmount_(value) {
 
 // 性別の判断(lib/whitekeyPlan.mjs の judgeGender と同じ考え方)。媒体の性別欄・チケット名から。
 // 戻り値: "女性" / "男性" / ""(判断できない=自動入力では男性として入力される)
+// 名前の終わりの字から、女性らしい名前かを推定する(lib/whitekeyRules.mjs の guessFemaleFromName と同じ規則)。
+const FEMALE_KANJI_END_ = /[子美香奈菜花恵絵梨彩咲乃衣織瑠莉穂萌凛華楓桜紗里代沙愛佳理江枝那苗]$/;
+const FEMALE_KANA_END_ = /[こみかなえりほよね]$/;
+function guessFemaleFromName_(name) {
+  const text = String(name || "").normalize("NFKC").replace(/\(同行\d+\)$/, "").replace(/[★☆\s]/g, "");
+  if (!text || /^[A-Za-z.'-]+$/.test(text)) return false;
+  if (/[ぁ-ん]/.test(text)) return FEMALE_KANA_END_.test(text);
+  return FEMALE_KANJI_END_.test(text);
+}
+
+// 1人分の金額・性別。媒体の情報があればそれを使い、無ければ推定する(推定は guess のフラグで見分けられる)。
+//  性別: 媒体に無ければ、名前から女性らしいかを推定(男性とは推定しない)。
+//  金額: 媒体に無ければ、公式イベントページの参加費(性別が分からなければ男性の参加費)。
+function personInfo_(group, row) {
+  let gender = judgeGender_(row);
+  let genderGuess = false;
+  if (!gender && guessFemaleFromName_(row.reservationName)) {
+    gender = "女性";
+    genderGuess = true;
+  }
+  let amount = parseAmount_(row.amount);
+  let amountGuess = false;
+  if (amount === null) {
+    const fee = gender === "女性" ? group.femaleFee : group.maleFee;
+    if (fee !== null && fee !== undefined) {
+      amount = fee;
+      amountGuess = true;
+    }
+  }
+  return { amount, amountGuess, gender, genderGuess };
+}
+
 function judgeGender_(row) {
   const text = `${row.genderHint || ""} ${row.ticketName || ""}`;
   if (/女/.test(text) && !/男/.test(text)) return "女性";
@@ -748,7 +789,7 @@ function doPost(e) {
 
 // 画面データの組み立て(約8秒)の結果を、5分間キャッシュする。ページは5分おきに自動更新するため、
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
-const DASH_CACHE_PREFIX_ = "dashboard_v6"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v7"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 

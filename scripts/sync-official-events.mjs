@@ -1,7 +1,9 @@
 import "dotenv/config";
 import { getVenueKey } from "../lib/venues.mjs";
+import { parsePrices } from "../lib/eventPrices.mjs";
 import {
   RAW_DATA_SHEET,
+  readOfficialEvents,
   readEventMaster,
   readSheetAsObjects,
   replaceEventMasterRows,
@@ -126,6 +128,51 @@ async function reconcileStaleOfficialIds(sheetId, events) {
   );
 }
 
+// 公式イベントページの「男性：￥2,500 女性：￥2,500」から、性別ごとの参加費を読み取って events に付ける。
+// 媒体(イベマド・Googleフォーム等)に金額が無い予約の、金額の目安に使う。
+// 前回までに読めた金額は引き継ぎ、まだ金額が無い「120日前以降」のイベントだけページを開く。
+async function fillEventFees(sheetId, events) {
+  let previous = [];
+  try {
+    previous = await readOfficialEvents(sheetId);
+  } catch {
+    // 初回などで読めなければ、全部読み直す
+  }
+  const feeById = new Map(previous.filter((p) => p.maleFee !== "" && p.maleFee !== undefined).map((p) => [String(p.canonicalEventId), p]));
+  const recent = new Date();
+  recent.setDate(recent.getDate() - 120);
+  const targets = [];
+  for (const event of events) {
+    const old = feeById.get(event.canonicalEventId);
+    if (old) {
+      event.maleFee = old.maleFee;
+      event.femaleFee = old.femaleFee;
+    } else if (event.link && event.date >= recent) {
+      targets.push(event);
+    }
+  }
+  let filled = 0;
+  for (let i = 0; i < targets.length; i += 8) {
+    await Promise.all(
+      targets.slice(i, i + 8).map(async (event) => {
+        try {
+          const res = await fetch(event.link);
+          if (!res.ok) return;
+          const prices = parsePrices(await res.text());
+          if (prices) {
+            event.maleFee = prices.male;
+            event.femaleFee = prices.female;
+            filled += 1;
+          }
+        } catch {
+          // 読めないイベントは金額なしのまま(次回また試す)
+        }
+      })
+    );
+  }
+  console.log(`参加費を読み取りました: ${filled}/${targets.length}件(引き継ぎ ${feeById.size}件)`);
+}
+
 async function main() {
   const sheetId = process.env.SHEET_ID;
   if (!sheetId) throw new Error("環境変数 SHEET_ID が設定されていません");
@@ -162,7 +209,7 @@ async function main() {
 
     const canonicalEventName = [`${month}/${day}`, venueKey, eventName, time].filter(Boolean).join(" ");
 
-    events.push({ canonicalEventId, canonicalEventName, month, day, venue: venueKey, venueKey, time, capacity: "" });
+    events.push({ canonicalEventId, canonicalEventName, month, day, venue: venueKey, venueKey, time, capacity: "", link, date: new Date(Number(year), month - 1, day) });
     eventDates.push(new Date(Number(year), month - 1, day));
   }
 
@@ -197,6 +244,7 @@ async function main() {
     console.warn(`URLパターンに一致せずスキップした投稿: ${skipped}件`);
   }
 
+  await fillEventFees(sheetId, events);
   await replaceOfficialEvents(sheetId, events);
   console.log(`OfficialEventsをWonder+公式サイトの${events.length}件で更新しました。`);
 
