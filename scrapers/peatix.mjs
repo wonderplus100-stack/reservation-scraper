@@ -472,7 +472,17 @@ export async function collect() {
     // セッション切れ等の失敗が他アカウントの取得まで止めないようにする。
     let reservations = [];
     try {
-      reservations = await scrapeAccount(account);
+      // 画面の読み込み中に切り替わる等の一時的なエラー("Execution context was destroyed"など)が
+      // 実際に出るため、最大3回までやり直す。ログイン切れは、やり直しても直らないので、すぐ諦める。
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          reservations = await scrapeAccount(account);
+          break;
+        } catch (err) {
+          if (attempt >= 3 || /セッションが無効/.test(String(err.message))) throw err;
+          console.warn(`peatix(${account.label}) 取得をやり直します(${attempt}/2): ${String(err.message).slice(0, 120)}`);
+        }
+      }
       reportSource("peatix", account.label, { ok: true });
     } catch (err) {
       console.error(`peatix(${account.label}) の取得に失敗しました:`, err.message);
