@@ -355,7 +355,7 @@ function buildDashboardData_() {
 // whitekeyに入れられていない予約(パーティーが無い等)。whitekey自動入力(scripts/whitekey-sync.mjs)が
 // WhitekeyPending シートに書く。
 // ダミー判定(lib/whitekeyRules.mjs の isDummyName と同じ規則。変える時は両方そろえること)。
-const DUMMY_NAME_PATTERN_ = /ウィル|ウイル|うぃる|ういる|ホワイトキー|ほわいとき|ﾎﾜｲﾄｷｰ|whitekey|wonder|ワンダー/i;
+const DUMMY_NAME_PATTERN_ = /ウィル|ウイル|うぃる|ういる|ホワイトキー|ほわいとき|ﾎﾜｲﾄｷｰ|whitekey|wonder|ワンダー|他団体|多団体/i;
 const SYMBOL_ONLY_PATTERN_ = /^[\d\s\-_.・★☆※]+$/;
 function isDummyName_(name) {
   const text = String(name || "").normalize("NFKC").trim();
@@ -748,7 +748,7 @@ function doPost(e) {
 
 // 画面データの組み立て(約8秒)の結果を、5分間キャッシュする。ページは5分おきに自動更新するため、
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
-const DASH_CACHE_PREFIX_ = "dashboard_v5"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v6"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 
