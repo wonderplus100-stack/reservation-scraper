@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { submitForm, withBrowser } from "../lib/browser.mjs";
 import { generateTotpCode } from "../lib/totp.mjs";
 import { decodeShiftJis, findColumn, tableFromCsv } from "../lib/csv.mjs";
+import { isTooOld, parseJaDate } from "../lib/fetchState.mjs";
 
 const LOGIN_URL = "https://www.kokuchpro.com/auth/login/";
 // 「募集中イベント」「終了イベント」の両方を対象にする(終了済みの回にも参加者は残る)。
@@ -123,6 +124,7 @@ const MAX_LIST_PAGES = 20;
 // しまう。
 async function listEventAdminUrls(page) {
   const rawUrls = new Set();
+  const dateByHash = new Map(); // イベント(e-ハッシュ)ごとの、一覧に出ている「開催日」
   for (const listUrl of EVENT_LIST_URLS) {
     for (let pageNum = 1; pageNum <= MAX_LIST_PAGES; pageNum += 1) {
       const url = pageNum === 1 ? listUrl : `${listUrl}&page=${pageNum}`;
@@ -131,9 +133,23 @@ async function listEventAdminUrls(page) {
       // それぞれ最大60秒粘り、外側のタイムアウトを診断ログなしで
       // 消費してしまっていたと考えられる)。
       await page.goto(url, { waitUntil: "domcontentloaded" });
-      const hrefs = await page.locator('a[href*="/admin/e-"]').evaluateAll((els) => els.map((el) => el.href));
+      const links = await page.evaluate(() => {
+        const hashOf = (href) => (href.match(/\/admin\/e-([0-9a-f]+)/) || [])[1];
+        const distinct = (el) => new Set([...el.querySelectorAll('a[href*="/admin/e-"]')].map((x) => hashOf(x.href))).size;
+        return [...document.querySelectorAll('a[href*="/admin/e-"]')].map((a) => {
+          // このイベントだけの行(他のイベントのリンクを含まない最大の親要素)の文言から、開催日を読む。
+          let row = a;
+          while (row.parentElement && distinct(row.parentElement) === 1) row = row.parentElement;
+          return { href: a.href, text: row.innerText.replace(/\s+/g, " ").slice(0, 400) };
+        });
+      });
       const before = rawUrls.size;
-      for (const href of hrefs) rawUrls.add(href.split("?")[0]);
+      for (const { href, text } of links) {
+        rawUrls.add(href.split("?")[0]);
+        const hash = (href.match(EVENT_ADMIN_URL_RE) || [])[1];
+        const date = parseJaDate(text.slice(text.indexOf("開催日")));
+        if (hash && date && !dateByHash.has(hash)) dateByHash.set(hash, date);
+      }
       if (rawUrls.size === before) break; // これ以上新しい行が無ければ次ページは無い
     }
   }
@@ -143,7 +159,7 @@ async function listEventAdminUrls(page) {
     const match = url.match(EVENT_ADMIN_URL_RE);
     if (!match) continue;
     const [, eventHash] = match;
-    if (!byHash.has(eventHash)) byHash.set(eventHash, url);
+    if (!byHash.has(eventHash)) byHash.set(eventHash, { url, eventHash, listDate: dateByHash.get(eventHash) || null });
   }
   return Array.from(byHash.values());
 }
@@ -161,6 +177,8 @@ async function listSessions(page, eventAdminUrl) {
     const optionLocator = select.locator("option").nth(i);
     const label = (await optionLocator.textContent())?.trim() || "";
     if (!label || label.includes("開催日の追加") || /^-+$/.test(label)) continue;
+    // 30日以上前の開催回は、選択(画面遷移)も名簿の取得もしない(前回までのデータは残す)。
+    if (isTooOld(parseJaDate(label))) continue;
 
     await select.selectOption({ index: i });
     // submitForm/一覧ページと同じ問題: 広告読み込みのせいでnetworkidleが
@@ -287,15 +305,27 @@ async function scrapeAccount(account) {
     const eventAdminUrls = await listEventAdminUrls(page);
     console.error(`[kokuchpro診断] イベント管理画面URL件数: ${eventAdminUrls.length}`);
     const reservations = [];
+    // 今回、名簿を取得した開催回(「ハッシュ/開催ID」)。取得しなかった開催回の予約は、前回までのデータを引き継ぐ。
+    const fetchedSessionIds = new Set();
+    reservations.fetchedSessionIds = fetchedSessionIds;
+    let skippedOld = 0;
 
-    for (const [index, eventAdminUrl] of eventAdminUrls.entries()) {
+    for (const [index, eventInfo] of eventAdminUrls.entries()) {
+      // 一覧の開催日が30日以上前のイベントは、開かない(前回までのデータは残す)。
+      if (isTooOld(eventInfo.listDate)) {
+        skippedOld += 1;
+        continue;
+      }
+      const eventAdminUrl = eventInfo.url;
       const sessions = await listSessions(page, eventAdminUrl);
+      if (sessions.length === 0) continue; // 全ての開催回が古い
       await page.goto(eventAdminUrl, { waitUntil: "domcontentloaded" });
       const eventTitle = await getEventTitle(page);
       console.error(`[kokuchpro診断] イベント処理中(${index + 1}/${eventAdminUrls.length}): ${eventTitle} (開催回数: ${sessions.length})`);
 
       for (const session of sessions) {
         const names = await downloadReservationNames(page, session.eventHash, session.dateId);
+        fetchedSessionIds.add(`${session.eventHash}/${session.dateId}`);
         for (const entry of names) {
           reservations.push({
             rawEventName: `${eventTitle}｜${session.sessionLabel}`,
@@ -314,6 +344,7 @@ async function scrapeAccount(account) {
         }
       }
     }
+    console.error(`[kokuchpro診断] 30日以上前のため開かなかったイベント: ${skippedOld}件`);
     return reservations;
   });
 }
@@ -329,7 +360,7 @@ function withAccountTimeout(promise, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-export async function collect() {
+export async function collect(context = {}) {
   const accounts = accountsFromEnv();
   const obtainedAt = new Date().toISOString();
   const rows = [];
@@ -352,6 +383,15 @@ export async function collect() {
   );
 
   for (const { account, reservations } of results) {
+    // 今回取得しなかった開催回(30日以上前など)の予約は、前回までのデータを引き継ぐ(消さない)。
+    // 取得に成功したアカウントだけが対象(失敗したアカウントは、run.mjs が前回のデータをそのまま保持する)。
+    if (reservations.fetchedSessionIds) {
+      for (const row of context.existingRaw || []) {
+        if (row.platform === "kokuchpro" && row.account === account.label && !reservations.fetchedSessionIds.has(String(row.platformEventId))) {
+          rows.push(row);
+        }
+      }
+    }
     for (const reservation of reservations) {
       rows.push({
         platform: "kokuchpro",

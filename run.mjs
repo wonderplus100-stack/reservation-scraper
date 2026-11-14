@@ -80,7 +80,7 @@ function parseOnlyArg() {
 // 先頭の媒体が固まる(例: ログイン待ち)と、その上限時間の分だけ後続の媒体の
 // 取得が遅れ、GitHub Actionsの実行上限(25分)に達すると、どの媒体のデータも
 // 書き込まれないまま実行が打ち切られる構造だった。
-async function collectAll(targets) {
+async function collectAll(targets, context = {}) {
   const results = await Promise.all(
     targets.map(async (name) => {
       const scraper = SCRAPERS[name];
@@ -91,7 +91,7 @@ async function collectAll(targets) {
       console.log(`--- collecting: ${name} ---`);
       try {
         const timeoutMs = SCRAPER_TIMEOUT_OVERRIDES_MS[name] || SCRAPER_TIMEOUT_MS;
-        const collected = await withTimeout(scraper.collect(), timeoutMs, name);
+        const collected = await withTimeout(scraper.collect(context), timeoutMs, name);
         console.log(`${name}: ${collected.length}件`);
         return collected;
       } catch (err) {
@@ -135,7 +135,10 @@ async function main() {
   if (!sheetId) throw new Error("環境変数 SHEET_ID が設定されていません");
 
   const targets = parseOnlyArg();
-  const rawRows = await collectAll(targets);
+  // 取得を軽くするため、スクレイパーには「前回までの予約データ」も渡す(古い・変化のないイベントを開かずに、
+  // その分の前回のデータを引き継ぐ。lib/fetchState.mjs)。
+  const previousRaw = await readSheetAsObjects(sheetId, RAW_DATA_SHEET).catch(() => []);
+  const rawRows = await collectAll(targets, { existingRaw: previousRaw });
 
   const eventMaster = await readEventMaster(sheetId);
   const officialEvents = await readOfficialEvents(sheetId);

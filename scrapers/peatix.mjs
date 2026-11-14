@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { withBrowser, storageStatePath, launchProfileContext } from "../lib/browser.mjs";
 import { decodeUtf16Le, findColumn, tableFromCsv } from "../lib/csv.mjs";
+import { cutoffDate, isUnchanged, rememberFetched } from "../lib/fetchState.mjs";
 
 // パスワードログインは廃止したため(下記scrapeAccount参照)、認証情報は
 // 使わない。EMAILの有無を「このアカウント枠を使う」目印としてのみ使い、
@@ -243,9 +244,11 @@ async function listEvents(page, dashboardUrl) {
   const allEvents = new Map();
   let lastSamples = [];
 
-  // ユーザー指示により、過去イベントは不要で当月分のみ対象とする。
-  const now = new Date();
-  const targetMonth = { year: now.getFullYear(), month: now.getMonth() + 1 };
+  // 取得するのは「終了から30日以内のイベント」と「これから開催のイベント(来月以降も全て)」。
+  // 以前は当月に開催のものだけで、来月以降のイベントの予約が反映されていなかった。
+  // 30日以上前のイベントは開かない(前回までのデータは、そのまま残す)。
+  const cutoff = cutoffDate();
+  const targetMonth = { year: cutoff.getFullYear(), month: cutoff.getMonth() + 1 };
 
   await scrollToLoadAll(page, { stopBeforeMonth: targetMonth });
   const { events: publishedEvents, sampleContainerTexts: publishedSamples } = await collectEventsFromDom(page);
@@ -268,13 +271,13 @@ async function listEvents(page, dashboardUrl) {
     console.error("[peatix診断] 終了タブが見つかりませんでした");
   }
 
-  const targetKey = targetMonth.year * 100 + targetMonth.month;
   const beforeFilterCount = allEvents.size;
+  const cutoffKey = cutoff.getFullYear() * 10000 + (cutoff.getMonth() + 1) * 100 + cutoff.getDate();
   const events = Array.from(allEvents.values()).filter(
-    (e) => e.dateYear !== null && e.dateYear * 100 + e.dateMonth === targetKey
+    (e) => e.dateYear !== null && e.dateYear * 10000 + e.dateMonth * 100 + (e.dateDay || 1) >= cutoffKey
   );
   console.error(
-    `[peatix診断] 当月(${targetMonth.year}年${targetMonth.month}月)絞り込み: ${beforeFilterCount}件 → ${events.length}件`
+    `[peatix診断] 対象期間(${cutoff.getFullYear()}年${cutoff.getMonth() + 1}月${cutoff.getDate()}日以降)の絞り込み: ${beforeFilterCount}件 → ${events.length}件`
   );
   console.error(`[peatix診断] dashboardUrl=${dashboardUrl} 実際のURL=${page.url()} 合計イベント件数=${events.length}`);
   const appliedZeroCount = events.filter((e) => !e.applied).length;
@@ -432,11 +435,21 @@ async function scrapeAccount(account) {
     const events = await listEvents(page, dashboardUrl);
 
     const reservations = [];
+    const skippedUnchanged = new Set();
+    reservations.listedEventIds = new Set(events.map((e) => String(e.eventId)));
+    reservations.skippedUnchanged = skippedUnchanged;
     for (const event of events) {
       if (!event.applied) continue; // 申込み0件のイベントはスキップ
+      // 申込数が前回と同じで、前回の取得から6時間以内なら開かない(前回までのデータを引き継ぐ)。
+      const stateKey = `peatix|${account.label}|${event.eventId}`;
+      if (isUnchanged(stateKey, event.applied)) {
+        skippedUnchanged.add(String(event.eventId));
+        continue;
+      }
       // WAF等のアクセス制限を刺激しないよう、イベントページ間に短い間隔を空ける。
       await page.waitForTimeout(400);
       const attendees = await scrapeEventAttendees(page, event.eventId);
+      rememberFetched(stateKey, event.applied);
       // 公式スケジュール(matchOfficialEvent)は日付+会場をrawEventNameの
       // テキストから抽出するため、Peatixのイベントタイトル自体には日付が
       // 含まれない(ダッシュボード上は別欄表示)点を補って埋め込む。
@@ -462,7 +475,7 @@ async function scrapeAccount(account) {
   }, { persistent: true });
 }
 
-export async function collect() {
+export async function collect(context = {}) {
   const accounts = accountsFromEnv();
   const obtainedAt = new Date().toISOString();
   const rows = [];
@@ -503,6 +516,15 @@ export async function collect() {
         amount: reservation.amount,
         obtainedAt
       });
+    }
+    // 今回開かなかったイベント(30日以上前・申込数が変わっていない)の予約は、前回までのデータを引き継ぐ。
+    // 一覧にあって申込0件になったイベントは引き継がない(取り消しで0件になったものを残さないため)。
+    const listed = reservations.listedEventIds || new Set();
+    const unchanged = reservations.skippedUnchanged || new Set();
+    for (const row of context.existingRaw || []) {
+      if (row.platform !== "peatix" || row.account !== account.label) continue;
+      const id = String(row.platformEventId);
+      if (!listed.has(id) || unchanged.has(id)) rows.push(row);
     }
   }
   return rows;
