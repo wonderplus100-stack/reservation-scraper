@@ -269,15 +269,20 @@
   //  Wonder+: それ以外の集客(Peatix・イベマド・ジモティ・Googleフォーム・つなげーと など)
   const GROUP_NOTES = {
     all: "すべての取得元の合算です。",
-    whitekey: "Wonder+公式サイトの予約と、こくちーず(Whitekey・Enjoyjapan)の予約です。",
-    wonder: "Whitekey以外の集客(Peatix・イベマド・ジモティ・Googleフォームなど)です。"
+    whitekey: "Wonder+公式サイトの予約と、こくちーず(Whitekey・Enjoy Japan)の予約です。",
+    wonder: "Whitekey以外の集客(Peatix・イベマド・ジモティ・Googleフォーム・Wonder+のこくちーずなど)です。"
   };
   let viewGroup = "all";
   try { viewGroup = ["all", "whitekey", "wonder"].includes(localStorage.getItem("wpdash_group")) ? localStorage.getItem("wpdash_group") : "all"; } catch (e) {}
 
+  // 取得元("platform/アカウント名")を区分に分ける。こくちーずは、アカウント名に「Whitekey」または
+  // 「Enjoy」を含むものだけがWhitekey側(それ以外のこくちーず=Wonder+自身のアカウントはWonder+側)。
   function groupOfSource(source) {
-    const platform = String(source || "").split("/")[0];
-    return platform === "wpBookings" || platform === "kokuchpro" ? "whitekey" : "wonder";
+    const text = String(source || "");
+    const platform = text.split("/")[0];
+    if (platform === "wpBookings") return "whitekey";
+    if (platform === "kokuchpro") return /whitekey|enjoy/i.test(text) ? "whitekey" : "wonder";
+    return "wonder";
   }
 
   // イベントを、選んだ区分の取得元だけで数え直した形にする(氏名ベースの重複除外は区分の中で行う)。
