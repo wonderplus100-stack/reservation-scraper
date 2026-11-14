@@ -76,6 +76,14 @@
      入りきらない場合はタグ側を次の行に折り返す(氏名を潰さない)。 */
   .name-main { flex: 1 1 140px; min-width: 140px; line-height: 1.4; }
   .name-main .katakana { color: #667085; margin-left: 6px; font-size: 12px; }
+  .name-main .gender, .name-main .amount {
+    display: inline-block; margin-left: 6px; font-size: 11px; line-height: 1; padding: 3px 6px;
+    border-radius: 6px; white-space: nowrap; vertical-align: 1px;
+  }
+  .name-main .gender.male { background: #e8f1ff; color: #175cd3; }
+  .name-main .gender.female { background: #fdecf3; color: #c11574; }
+  .name-main .gender.unknown { background: #f2f4f7; color: #667085; }
+  .name-main .amount { background: #ecfdf3; color: #067647; }
   .name-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
   .source-tag {
     font-size: 11px; color: #475467; background: #eef1f4; border: 1px solid #d0d5dd;
@@ -245,6 +253,17 @@
       sourceCounts: (event.sourceCounts || []).filter((s) => groupOfSource(s.source) === viewGroup),
       referrerCounts: []
     };
+  }
+
+  // 氏名の横に出す、性別と金額。性別が媒体から分からない場合は「不明(男)」と出す
+  // (whitekeyへの自動入力では、分からない時は男性として入力するため)。
+  function genderTag(n) {
+    if (n.gender === "女性") return '<span class="gender female">女性</span>';
+    if (n.gender === "男性") return '<span class="gender male">男性</span>';
+    return '<span class="gender unknown" title="媒体に性別の情報がありません(自動入力では男性として入力されます)">不明(男)</span>';
+  }
+  function amountTag(n) {
+    return typeof n.amount === "number" ? `<span class="amount">${n.amount.toLocaleString("ja-JP")}円</span>` : "";
   }
 
   function currentEvents() {
@@ -528,7 +547,7 @@
         <div class="name-list">
           ${event.names.map((n) => `
             <div class="name-row">
-              <span class="name-main">${escapeHtml(n.name)}${n.katakana && n.katakana !== n.name ? `<span class="katakana">(${escapeHtml(n.katakana)})</span>` : ""}</span>
+              <span class="name-main">${escapeHtml(n.name)}${n.katakana && n.katakana !== n.name ? `<span class="katakana">(${escapeHtml(n.katakana)})</span>` : ""}${genderTag(n)}${amountTag(n)}</span>
               <span class="name-meta">
                 <span class="source-tag">${escapeHtml(formatSource(n.source))}</span>
                 ${n.referrer ? `<span class="referrer">${escapeHtml(n.referrer)}</span>` : ""}

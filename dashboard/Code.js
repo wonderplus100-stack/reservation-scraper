@@ -112,7 +112,17 @@ function buildDashboardData_() {
       // カタカナ表記: ふりがな列からの変換値があればそれを使い、なければ
       // (Googleフォーム以外など、ふりがな情報が無い媒体)元の氏名表記のまま。
       const katakana = String(row.readingKatakana || "").trim() || name;
-      group.uniqueNames.set(normalizedName, { name, katakana, referrer: referrerName, source: sourceKey, sources: [sourceKey] });
+      // 金額と性別(媒体のチケット名・性別欄から判断。分からない時は空)。
+      // 自動入力で男女を判定する時と同じ考え方で表示する(分からなければ男性として入力される)。
+      const amount = parseAmount_(row.amount);
+      group.uniqueNames.set(normalizedName, {
+        name, katakana, referrer: referrerName, source: sourceKey, sources: [sourceKey],
+        amount, gender: judgeGender_(row)
+      });
+    } else if (existing) {
+      // 同じ人の別の行に金額・性別があれば補う
+      if (existing.amount === null || existing.amount === undefined) existing.amount = parseAmount_(row.amount);
+      if (!existing.gender) existing.gender = judgeGender_(row);
     }
     if (String(row.obtainedAt || "") > group.latestObtainedAt) {
       group.latestObtainedAt = String(row.obtainedAt || "");
@@ -143,6 +153,9 @@ function buildDashboardData_() {
   const unlinkedGroups = new Map(); // どの公式イベントにも紐づいていない予約
 
   for (const row of rawRows) {
+    // こくちーずのダミー予約(社名などを名前にした確認用の予約)は、人数にも名簿にも入れない。
+    // (元の媒体の予約には何もしない。表示から外すだけ)
+    if (row.platform === "kokuchpro" && isDummyName_(row.reservationName)) continue;
     // 人が「対象外」と確定した予約は、集計にも未紐づけにも出さない。
     const mappedId = row.platformEventId ? mapByKey.get(`${row.platform}|||${row.platformEventId}`) : undefined;
     const masterId = masterLookup.get(`${row.platform}|||${row.account}|||${String(row.rawEventName || "").trim()}`);
@@ -339,6 +352,30 @@ function buildDashboardData_() {
 // (Dateオブジェクトは google.script.run で null になるため)。
 // whitekeyに入れられていない予約(パーティーが無い等)。whitekey自動入力(scripts/whitekey-sync.mjs)が
 // WhitekeyPending シートに書く。
+// ダミー判定(lib/whitekeyRules.mjs の isDummyName と同じ規則。変える時は両方そろえること)。
+const DUMMY_NAME_PATTERN_ = /ウィル|ウイル|うぃる|ういる|ホワイトキー|ほわいとき|ﾎﾜｲﾄｷｰ|whitekey|wonder|ワンダー/i;
+const SYMBOL_ONLY_PATTERN_ = /^[\d\s\-_.・★☆※]+$/;
+function isDummyName_(name) {
+  const text = String(name || "").normalize("NFKC").trim();
+  if (!text) return false;
+  return DUMMY_NAME_PATTERN_.test(text) || SYMBOL_ONLY_PATTERN_.test(text);
+}
+
+// 金額の文字列("3,000円"等)を数にする。空・不明は null。
+function parseAmount_(value) {
+  const text = String(value === undefined || value === null ? "" : value).replace(/[^\d]/g, "");
+  return text ? Number(text) : null;
+}
+
+// 性別の判断(lib/whitekeyPlan.mjs の judgeGender と同じ考え方)。媒体の性別欄・チケット名から。
+// 戻り値: "女性" / "男性" / ""(判断できない=自動入力では男性として入力される)
+function judgeGender_(row) {
+  const text = `${row.genderHint || ""} ${row.ticketName || ""}`;
+  if (/女/.test(text) && !/男/.test(text)) return "女性";
+  if (/男/.test(text) && !/女/.test(text)) return "男性";
+  return "";
+}
+
 function readWhitekeyPending_(ss) {
   const sheet = ss.getSheetByName("WhitekeyPending");
   if (!sheet) return [];
@@ -702,7 +739,7 @@ function doPost(e) {
 
 // 画面データの組み立て(約8秒)の結果を、5分間キャッシュする。ページは5分おきに自動更新するため、
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
-const DASH_CACHE_PREFIX_ = "dashboard_v3";
+const DASH_CACHE_PREFIX_ = "dashboard_v4"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 
