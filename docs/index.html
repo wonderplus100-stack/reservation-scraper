@@ -271,6 +271,7 @@
   .src-peatix { background: #fff1e0; color: #b54708; }
   .src-form { background: #f1eaff; color: #6941c6; }
   .src-evemado { background: #e0f5f5; color: #0e7090; }
+  .prepaid-badge, .stat-chip.prepaid-chip { background: #fef0c7; color: #b54708; font-weight: 700; }
   .src-other { background: #f2f4f7; color: #475467; }
   .guest-ref { color: #175cd3; }
 
@@ -663,6 +664,7 @@
       return;
     }
     const referrerCounts = event.referrerCounts || [];
+    const prepaidCount = event.names.filter((n) => n.prepaid).length;
     const amountSum = event.names.reduce((sum, n) => sum + (typeof n.amount === "number" ? n.amount : 0), 0);
     container.innerHTML = `
       <div class="event-card">
@@ -676,6 +678,7 @@
           <span class="stat-chip male">男性 <b>${event.names.filter((n) => n.gender === "男性").length}</b></span>
           <span class="stat-chip female">女性 <b>${event.names.filter((n) => n.gender === "女性").length}</b></span>
           <span class="stat-chip">不明 <b>${event.names.filter((n) => !n.gender).length}</b></span>
+          ${prepaidCount ? `<span class="stat-chip prepaid-chip">事前決済 <b>${prepaidCount}</b></span>` : ""}
           ${amountSum ? `<span class="stat-chip sum">当日の料金合計(目安) <b>${amountSum.toLocaleString("ja-JP")}円</b></span>` : ""}
         </div>
         <div class="stat-row">
@@ -689,6 +692,7 @@
               <span class="guest-tags">${genderTag(n)}${amountTag(n)}</span>
               <span class="guest-sub">
                 <span class="src-badge ${sourceClass(n.source)}">${escapeHtml(shortSource(n.source))}</span>
+                ${n.prepaid ? `<span class="src-badge prepaid-badge">事前決済</span>` : ""}
                 ${n.katakana && n.katakana !== n.name ? `<span>${escapeHtml(n.katakana)}</span>` : ""}
                 ${n.referrer ? `<span class="guest-ref">紹介: ${escapeHtml(n.referrer)}</span>` : ""}
               </span>
