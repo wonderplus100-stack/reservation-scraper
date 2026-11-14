@@ -323,16 +323,24 @@ export async function collect() {
   const obtainedAt = new Date().toISOString();
   const rows = [];
 
-  for (const account of accounts) {
-    let reservations;
-    try {
-      reservations = await scrapeAccount(account);
-      reportSource("kokuchpro", account.label, { ok: true });
-    } catch (err) {
-      console.error(`kokuchpro(${account.label}) の取得に失敗しました:`, err.message);
-      reportSource("kokuchpro", account.label, { ok: false, message: err.message });
-      continue;
-    }
+  // アカウントは同時に取得する。1アカウントに約10分かかるため、順番に取得すると、アカウントが増えた分だけ
+  // 全体の上限時間(run.mjs の kokuchpro の上限)を超え、全アカウントのデータが失われてしまう
+  // (2アカウント目を足した直後に実際に発生した)。失敗は、アカウントごとに分けて報告する。
+  const results = await Promise.all(
+    accounts.map(async (account) => {
+      try {
+        const reservations = await scrapeAccount(account);
+        reportSource("kokuchpro", account.label, { ok: true });
+        return { account, reservations };
+      } catch (err) {
+        console.error(`kokuchpro(${account.label}) の取得に失敗しました:`, err.message);
+        reportSource("kokuchpro", account.label, { ok: false, message: err.message });
+        return { account, reservations: [] };
+      }
+    })
+  );
+
+  for (const { account, reservations } of results) {
     for (const reservation of reservations) {
       rows.push({
         platform: "kokuchpro",
