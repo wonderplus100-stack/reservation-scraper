@@ -108,95 +108,52 @@ async function login(page, account) {
   }
 }
 
-// 1ページ20件で複数ページに分かれるため(実アカウントで最大5ページ確認済み)、
-// 新しい行が取れなくなるまで(または安全のため上限20ページまで)辿る。
-const MAX_LIST_PAGES = 20;
+// 1ページ20件で複数ページに分かれるため、新しい行が取れなくなるまで(または安全のため上限まで)辿る。
+const MAX_LIST_PAGES = 60;
 
-// イベント一覧ページから、各イベントの管理画面URL(最初の開催日)を集める。
-// 重要: 定期開催イベントは同じe-ハッシュ(イベント本体)が開催日の数だけ
-// 一覧に別行(別d-id)で表示される。1つのd-idにアクセスするだけで
-// そのイベントの全開催日(dropdown)が分かるため、e-ハッシュ単位で
-// 重複除去しないと、同じイベントの全開催回を行の数だけ重複して
-// 処理してしまう(実測で1イベント最大48開催回、これが数時間規模の
-// 処理時間になっていた主因)。ページネーション終了判定は生URL単位
-// (重複除去前)で行う、でないと1ページが同一イベントの複数行だけで
-// 埋まった場合に「新しいイベントなし」と誤判定して途中で打ち切って
-// しまう。
-async function listEventAdminUrls(page) {
-  const rawUrls = new Set();
-  const dateByHash = new Map(); // イベント(e-ハッシュ)ごとの、一覧に出ている「開催日」
-  for (const listUrl of EVENT_LIST_URLS) {
+// イベント一覧(募集中・終了)から、「開催日ごとの行」(e-ハッシュ + d-ID + タイトル + 開催日)を集める。
+// 一覧には、定期開催イベントの開催日ごとに別の行(別のd-ID)が並ぶ。以前は、イベントの管理画面で開催日を
+// 1つずつ選択して画面を切り替え、d-IDを調べていたため、1イベントに十数秒かかっていた(2アカウント目を
+// 足したところ、全体で18分を超えた)。一覧の行から直接d-IDが分かるので、その選択の操作は不要。
+async function listSessionRows(page) {
+  const rowsByKey = new Map();
+  for (const [listIndex, listUrl] of EVENT_LIST_URLS.entries()) {
+    const closed = listUrl.includes("/close/");
     for (let pageNum = 1; pageNum <= MAX_LIST_PAGES; pageNum += 1) {
       const url = pageNum === 1 ? listUrl : `${listUrl}&page=${pageNum}`;
-      // ログインページ同様、広告読み込みで"load"イベントが遅延するため
-      // domcontentloadedで次に進む(これが未対応だったため、goto()が
-      // それぞれ最大60秒粘り、外側のタイムアウトを診断ログなしで
-      // 消費してしまっていたと考えられる)。
+      // 広告読み込みで"load"イベントが遅延するため、domcontentloadedで次に進む。
       await page.goto(url, { waitUntil: "domcontentloaded" });
-      const links = await page.evaluate(() => {
-        const hashOf = (href) => (href.match(/\/admin\/e-([0-9a-f]+)/) || [])[1];
-        const distinct = (el) => new Set([...el.querySelectorAll('a[href*="/admin/e-"]')].map((x) => hashOf(x.href))).size;
-        return [...document.querySelectorAll('a[href*="/admin/e-"]')].map((a) => {
-          // このイベントだけの行(他のイベントのリンクを含まない最大の親要素)の文言から、開催日を読む。
-          let row = a;
-          while (row.parentElement && distinct(row.parentElement) === 1) row = row.parentElement;
-          return { href: a.href, text: row.innerText.replace(/\s+/g, " ").slice(0, 400) };
-        });
+      const found = await page.evaluate(() => {
+        const idsOf = (href) => {
+          const m = href.match(/\/admin\/e-([0-9a-f]+)\/d-(\d+)\//);
+          return m ? { hash: m[1], dateId: m[2] } : null;
+        };
+        const distinctDates = (el) => new Set([...el.querySelectorAll('a[href*="/admin/e-"]')].map((x) => (idsOf(x.href) || {}).dateId)).size;
+        return [...document.querySelectorAll('a[href*="/admin/e-"]')]
+          .map((a) => {
+            const ids = idsOf(a.href);
+            if (!ids) return null;
+            // この開催日の行だけ(他の開催日のリンクを含まない最大の親要素)の文言
+            let row = a;
+            while (row.parentElement && distinctDates(row.parentElement) === 1) row = row.parentElement;
+            return { ...ids, text: row.innerText.replace(/\s+/g, " ").trim().slice(0, 500) };
+          })
+          .filter(Boolean);
       });
-      const before = rawUrls.size;
-      for (const { href, text } of links) {
-        rawUrls.add(href.split("?")[0]);
-        const hash = (href.match(EVENT_ADMIN_URL_RE) || [])[1];
-        const date = parseJaDate(text.slice(text.indexOf("開催日")));
-        if (hash && date && !dateByHash.has(hash)) dateByHash.set(hash, date);
+      const before = rowsByKey.size;
+      for (const { hash, dateId, text } of found) {
+        const key = `${hash}/${dateId}`;
+        if (rowsByKey.has(key)) continue;
+        const dateIndex = text.indexOf("開催日");
+        const dateMatch = text.slice(dateIndex).match(/(\d{4}年\d{1,2}月\d{1,2}日[^ ]*\s*\d{1,2}:\d{2}[〜~-]\d{1,2}:\d{2})/);
+        const dateLabel = dateMatch ? dateMatch[1] : "";
+        const title = text.slice(0, dateIndex).replace(/^注目\s*/, "").trim();
+        rowsByKey.set(key, { eventHash: hash, dateId, title, dateLabel, date: parseJaDate(dateLabel || text.slice(dateIndex)), closed });
       }
-      if (rawUrls.size === before) break; // これ以上新しい行が無ければ次ページは無い
+      if (rowsByKey.size === before) break; // これ以上新しい行が無ければ次ページは無い
     }
   }
-
-  const byHash = new Map();
-  for (const url of rawUrls) {
-    const match = url.match(EVENT_ADMIN_URL_RE);
-    if (!match) continue;
-    const [, eventHash] = match;
-    if (!byHash.has(eventHash)) byHash.set(eventHash, { url, eventHash, listDate: dateByHash.get(eventHash) || null });
-  }
-  return Array.from(byHash.values());
-}
-
-// イベント管理画面の開催日セレクトボックスを1つずつ選び、
-// 各開催日に対応する d-ID とラベル(日時)を集める。
-async function listSessions(page, eventAdminUrl) {
-  await page.goto(eventAdminUrl, { waitUntil: "domcontentloaded" });
-  const select = page.locator("select").first();
-  const optionCount = await select.locator("option").count();
-  const sessions = [];
-  const seen = new Set();
-
-  for (let i = 0; i < optionCount; i += 1) {
-    const optionLocator = select.locator("option").nth(i);
-    const label = (await optionLocator.textContent())?.trim() || "";
-    if (!label || label.includes("開催日の追加") || /^-+$/.test(label)) continue;
-    // 30日以上前の開催回は、選択(画面遷移)も名簿の取得もしない(前回までのデータは残す)。
-    if (isTooOld(parseJaDate(label))) continue;
-
-    await select.selectOption({ index: i });
-    // submitForm/一覧ページと同じ問題: 広告読み込みのせいでnetworkidleが
-    // 成立せず、開催回数(セッション)が多いイベントで1回あたり最大60秒
-    // 粘ってしまい、1件のイベントだけで外側のタイムアウトを使い切って
-    // いた(実測で確認)。ここで本当に必要なのは「URLが開催日ごとの
-    // 管理画面に変わったこと」だけなので、load-state系ではなく
-    // waitForURLで直接それを待つ(domcontentloadedだと遷移開始前に
-    // 呼んでしまい即座に解決してしまう競合の恐れがあるため)。
-    await page.waitForURL(EVENT_ADMIN_URL_RE, { timeout: 15000 }).catch(() => {});
-    const match = page.url().match(EVENT_ADMIN_URL_RE);
-    if (!match) continue;
-    const [, eventHash, dateId] = match;
-    if (seen.has(dateId)) continue;
-    seen.add(dateId);
-    sessions.push({ eventHash, dateId, sessionLabel: label });
-  }
-  return sessions;
+  return Array.from(rowsByKey.values());
 }
 
 async function getEventTitle(page) {
@@ -297,54 +254,63 @@ async function loginWithRetry(page, account, attempts = 3) {
   }
 }
 
+// 名簿のダウンロードは、同じログイン状態の画面(タブ)を複数使って同時に行う。
+const PARALLEL_PAGES = 4;
+
 async function scrapeAccount(account) {
   return withBrowser(`kokuchpro-${account.label}`, async (page) => {
     await loginWithRetry(page, account);
     console.error("[kokuchpro診断] ログイン成功");
 
-    const eventAdminUrls = await listEventAdminUrls(page);
-    console.error(`[kokuchpro診断] イベント管理画面URL件数: ${eventAdminUrls.length}`);
+    const allRows = await listSessionRows(page);
+    // 30日以上前の開催回は、名簿を取得しない(前回までのデータは、collect で引き継ぐ)。
+    const sessions = allRows.filter((row) => !isTooOld(row.date));
+    console.error(`[kokuchpro診断] 開催回: 一覧${allRows.length}件 → 取得対象${sessions.length}件(30日以上前の${allRows.length - sessions.length}件は取得しない)`);
+
     const reservations = [];
     // 今回、名簿を取得した開催回(「ハッシュ/開催ID」)。取得しなかった開催回の予約は、前回までのデータを引き継ぐ。
     const fetchedSessionIds = new Set();
     reservations.fetchedSessionIds = fetchedSessionIds;
-    let skippedOld = 0;
 
-    for (const [index, eventInfo] of eventAdminUrls.entries()) {
-      // 一覧の開催日が30日以上前のイベントは、開かない(前回までのデータは残す)。
-      if (isTooOld(eventInfo.listDate)) {
-        skippedOld += 1;
-        continue;
-      }
-      const eventAdminUrl = eventInfo.url;
-      const sessions = await listSessions(page, eventAdminUrl);
-      if (sessions.length === 0) continue; // 全ての開催回が古い
-      await page.goto(eventAdminUrl, { waitUntil: "domcontentloaded" });
-      const eventTitle = await getEventTitle(page);
-      console.error(`[kokuchpro診断] イベント処理中(${index + 1}/${eventAdminUrls.length}): ${eventTitle} (開催回数: ${sessions.length})`);
-
-      for (const session of sessions) {
-        const names = await downloadReservationNames(page, session.eventHash, session.dateId);
-        fetchedSessionIds.add(`${session.eventHash}/${session.dateId}`);
-        for (const entry of names) {
-          reservations.push({
-            rawEventName: `${eventTitle}｜${session.sessionLabel}`,
-            // 自動投稿ツールが記録する公開URL(/event/{ハッシュ}/{開催ID}/)と
-            // 同じ「ハッシュ/開催ID」形式のキー。タイトルが変わっても不変。
-            platformEventId: `${session.eventHash}/${session.dateId}`,
-            reservationName: entry.name,
-            // 同じ申込を二重に入力しないためのキー(申込番号が無い場合は氏名で代用)。
-            bookingKey: `kokuchpro|${session.eventHash}/${session.dateId}|${entry.bookingNo || entry.name}`,
-            bookingStatus: entry.status,
-            ticketName: entry.ticketName,
-            amount: entry.amount,
-            genderHint: entry.gender,
-            quantity: entry.quantity
-          });
+    const context = page.context();
+    const workers = [page, ...(await Promise.all(Array.from({ length: PARALLEL_PAGES - 1 }, () => context.newPage())))];
+    const results = new Array(sessions.length);
+    let next = 0;
+    let done = 0;
+    await Promise.all(
+      workers.map(async (worker) => {
+        for (;;) {
+          const index = next;
+          next += 1;
+          if (index >= sessions.length) return;
+          const session = sessions[index];
+          results[index] = await downloadReservationNames(worker, session.eventHash, session.dateId);
+          done += 1;
+          if (done % 20 === 0) console.error(`[kokuchpro診断] 名簿取得 ${done}/${sessions.length}`);
         }
+      })
+    );
+
+    sessions.forEach((session, index) => {
+      fetchedSessionIds.add(`${session.eventHash}/${session.dateId}`);
+      const label = `${session.closed ? "（終了）" : "（募集中）"}${session.dateLabel}`;
+      for (const entry of results[index] || []) {
+        reservations.push({
+          rawEventName: `${session.title}｜${label}`,
+          // 自動投稿ツールが記録する公開URL(/event/{ハッシュ}/{開催ID}/)と
+          // 同じ「ハッシュ/開催ID」形式のキー。タイトルが変わっても不変。
+          platformEventId: `${session.eventHash}/${session.dateId}`,
+          reservationName: entry.name,
+          // 同じ申込を二重に入力しないためのキー(申込番号が無い場合は氏名で代用)。
+          bookingKey: `kokuchpro|${session.eventHash}/${session.dateId}|${entry.bookingNo || entry.name}`,
+          bookingStatus: entry.status,
+          ticketName: entry.ticketName,
+          amount: entry.amount,
+          genderHint: entry.gender,
+          quantity: entry.quantity
+        });
       }
-    }
-    console.error(`[kokuchpro診断] 30日以上前のため開かなかったイベント: ${skippedOld}件`);
+    });
     return reservations;
   });
 }
