@@ -20,7 +20,10 @@ const PLATFORM_EVENT_MAP_HEADERS = ["platform", "platformEventId", "officialEven
 const EVENT_MASTER_HEADERS = ["canonicalEventId", "canonicalEventName", "platform", "account", "rawEventName"];
 const SOURCE_STATUS_SHEET = "SourceStatus";
 const UPDATE_CONTROL_SHEET = "UpdateControl";
-const UPDATE_CONTROL_HEADERS = ["status", "message", "requestedAt", "updatedAt"];
+// sources: 更新を頼まれた取得先(platform名をカンマ区切り) / heartbeatAt: 専用PCの受付プログラムが生きている印(PC側が書く)
+const UPDATE_CONTROL_HEADERS = ["status", "message", "requestedAt", "updatedAt", "sources", "heartbeatAt"];
+// ボタンから更新を頼める取得先(scrapers/ の名前)。これ以外は受け付けない。
+const UPDATABLE_SOURCES_ = ["peatix", "wpBookings", "evemado", "jimoty", "googleForms", "kokuchpro"];
 
 function getSheetId_() {
   const id = PropertiesService.getScriptProperties().getProperty(SHEET_ID_PROPERTY_KEY);
@@ -765,7 +768,10 @@ function getUpdateControlSheet_(ss) {
   if (!sheet) {
     sheet = ss.insertSheet(UPDATE_CONTROL_SHEET);
     sheet.getRange(1, 1, 1, UPDATE_CONTROL_HEADERS.length).setValues([UPDATE_CONTROL_HEADERS]);
-    sheet.getRange(2, 1, 1, UPDATE_CONTROL_HEADERS.length).setValues([["idle", "", "", ""]]);
+    sheet.getRange(2, 1, 1, 5).setValues([["idle", "", "", "", ""]]);
+  } else if (String(sheet.getRange(1, 5).getValue()) !== "sources") {
+    // 以前の4列のシートに、新しい列の見出しを足す
+    sheet.getRange(1, 1, 1, UPDATE_CONTROL_HEADERS.length).setValues([UPDATE_CONTROL_HEADERS]);
   }
   return sheet;
 }
@@ -774,23 +780,46 @@ function readUpdateControl_() {
   const ss = SpreadsheetApp.openById(getSheetId_());
   const sheet = getUpdateControlSheet_(ss);
   const values = sheet.getRange(2, 1, 1, UPDATE_CONTROL_HEADERS.length).getValues()[0];
-  return { status: values[0] || "idle", message: values[1] || "", requestedAt: values[2] || "", updatedAt: values[3] || "" };
+  const iso = (v) => (Object.prototype.toString.call(v) === "[object Date]" ? v.toISOString() : String(v || ""));
+  return {
+    status: values[0] || "idle",
+    message: values[1] || "",
+    requestedAt: iso(values[2]),
+    updatedAt: iso(values[3]),
+    sources: String(values[4] || ""),
+    heartbeatAt: iso(values[5])
+  };
 }
 
-// このダッシュボードのボタンから呼ばれる想定。PC側のポーリングが
-// status="requested" を検知して処理するので、ここでは指示を書き込むだけで
-// 即座に返る(実際の取得完了は fetchUpdateStatus のポーリングで確認する)。
-function requestPeatixUpdate() {
+// このダッシュボードのボタンから呼ばれる。専用PC側の受付プログラムが
+// status="requested" を検知して処理するので、ここでは指示(どの取得先を更新するか)を
+// 書き込むだけで即座に返る(実際の取得完了は fetchUpdateStatus のポーリングで確認する)。
+// sources を省略すると Peatix だけ(以前の「今すぐ更新(Peatix)」と同じ)。
+function requestUpdate(sources) {
   if (!isAuthorized_()) throw new Error("アクセス権がありません");
-  const current = readUpdateControl_();
-  if (current.status === "requested" || current.status === "running") {
-    return current; // 既に処理中なら二重リクエストしない
+  const list = (Array.isArray(sources) && sources.length ? sources : ["peatix"])
+    .map((s) => String(s))
+    .filter((s, i, a) => UPDATABLE_SOURCES_.indexOf(s) !== -1 && a.indexOf(s) === i);
+  if (list.length === 0) throw new Error("更新する取得先が選ばれていません");
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const current = readUpdateControl_();
+    if (current.status === "requested" || current.status === "running") {
+      return current; // 既に処理中なら二重リクエストしない
+    }
+    const ss = SpreadsheetApp.openById(getSheetId_());
+    const sheet = getUpdateControlSheet_(ss);
+    const now = new Date().toISOString();
+    sheet.getRange(2, 1, 1, 5).setValues([["requested", "更新をリクエストしました", now, now, list.join(",")]]);
+    return readUpdateControl_();
+  } finally {
+    lock.releaseLock();
   }
-  const ss = SpreadsheetApp.openById(getSheetId_());
-  const sheet = getUpdateControlSheet_(ss);
-  const now = new Date().toISOString();
-  sheet.getRange(2, 1, 1, UPDATE_CONTROL_HEADERS.length).setValues([["requested", "更新をリクエストしました", now, now]]);
-  return readUpdateControl_();
+}
+
+function requestPeatixUpdate() {
+  return requestUpdate(["peatix"]);
 }
 
 function fetchUpdateStatus() {
@@ -827,6 +856,7 @@ const API_FUNCTIONS_ = {
   fetchDashboardData: fetchDashboardData,
   fetchUpdateStatus: fetchUpdateStatus,
   requestPeatixUpdate: requestPeatixUpdate,
+  requestUpdate: requestUpdate,
   linkEvent: linkEvent
 };
 

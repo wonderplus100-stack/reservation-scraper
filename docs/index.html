@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Wonder+ 集客状況ダッシュボード</title>
-<style>.update-bar{display:none !important}</style>
+
 </head>
 <body>
 <script>
@@ -13,7 +13,7 @@
 // 共有キーは共有URLの #k=... で受け取り、ブラウザに保存する(ページのソースには含めない)。
 (function () {
   const API_URL = "https://script.google.com/macros/s/AKfycbxvJXhziKrF_0lLN7_-K_7DylYwSfRyU7uB2Px-CnBsNHPUTmceWr2UtM1coC97QuM/exec";
-  const WRITE_FUNCTIONS = ["linkEvent", "requestPeatixUpdate"];
+  const WRITE_FUNCTIONS = ["linkEvent", "requestPeatixUpdate", "requestUpdate"];
   const hashKey = new URLSearchParams(location.hash.slice(1)).get("k");
   try { if (hashKey) localStorage.setItem("wpdash_key", hashKey); } catch (e) {}
   // 鍵(#k=...)はURLに残す。消すと、アドレスバーからURLをコピーして別のPCで開いた時に鍵が無く、
@@ -158,6 +158,19 @@
     background: #fff; border: 1px solid #e3e6ea; border-radius: 10px;
     padding: 10px 14px; margin-bottom: 14px;
   }
+  .update-body { padding: 0 14px 12px; }
+  .update-help { font-size: 12.5px; color: #475467; margin: 0 0 8px; }
+  .update-note { font-size: 11.5px; color: #667085; margin: 10px 0 0; line-height: 1.6; }
+  .update-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+  .update-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-top: 1px solid #f2f4f7; font-size: 14px; cursor: pointer; }
+  .update-row:first-child { border-top: 0; }
+  .update-row input { width: 18px; height: 18px; flex: none; }
+  .update-row .u-name { font-weight: 600; color: #101828; min-width: 92px; }
+  .update-row .u-state { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+  .update-row .u-state.ok { background: #ecfdf3; color: #067647; }
+  .update-row .u-state.warn { background: #fffaeb; color: #b54708; }
+  .update-row .u-state.bad { background: #fef3f2; color: #b42318; }
+  .update-row .u-age { font-size: 12px; color: #667085; }
   .update-status { font-size: 12px; color: #475467; }
   .update-status.done { color: #067647; }
   .update-status.error { color: #b42318; }
@@ -284,15 +297,23 @@
 <h1>Wonder+ 集客状況ダッシュボード</h1>
 <div class="updated-at" id="updatedAt"></div>
 <div id="loadError" hidden style="margin:10px 0;padding:12px 14px;border:1px solid #f4b4ae;background:#fef3f2;color:#b42318;border-radius:10px;font-size:14px;line-height:1.6;"></div>
-<div class="update-bar">
-  <button id="updateNowButton">今すぐ更新(Peatix)</button>
-  <span class="update-status" id="updateStatusText"></span>
-</div>
 <div class="source-panel chip-panel" id="sourcePanel">
   <div class="source-head"><span>データの取得状況</span><span class="source-summary-note" id="sourceSummaryNote"></span></div>
   <div class="source-chips" id="sourceChips"></div>
   <div class="source-detail-box" id="sourceDetailBox" hidden></div>
 </div>
+<details class="source-panel update-panel" id="updatePanel">
+  <summary><span>データを更新する</span><span class="source-summary-note" id="updateSummaryNote"></span></summary>
+  <div class="update-body">
+    <p class="update-help">取得に失敗・停止している取得先だけ、自動でチェックが入ります。更新済みの取得先は、取得し直したい時だけチェックしてください。</p>
+    <div id="updateList"></div>
+    <div class="update-actions">
+      <button id="updateNowButton" disabled>選んだ取得先を更新</button>
+      <span class="update-status" id="updateStatusText"></span>
+    </div>
+    <p class="update-note">Googleフォーム・こくちーずは、PCが止まっていても、30分おきに自動で更新されます。Peatix・公式サイト予約・イベマド・ジモティは、専用PCが起動している間、2時間おきに自動で更新されます。このボタンの更新も、専用PCが起動している時に行われます。</p>
+  </div>
+</details>
 <details class="source-panel" id="whitekeyPanel" hidden>
   <summary><span>whitekeyに入っていない予約</span><span class="source-summary-note" id="whitekeyNote"></span></summary>
   <div class="source-rows" id="whitekeyRows"></div>
@@ -823,6 +844,8 @@
     });
     showDetail();
     document.getElementById("sourcePanel").classList.toggle("has-problem", problems > 0);
+    lastSourceRows = rows;
+    renderUpdateList();
   }
 
   // whitekeyに入っていない予約(whitekeyにパーティーがない・候補が複数など)を出し続ける。
@@ -886,34 +909,110 @@
   // 場合はPC側の画面に案内が出るので、Gmailを確認できる人がその場で
   // 認証コードを入力する(その間の状況もこのステータス欄に表示される)。
   let updatePollTimer = null;
+  let updateBusy = false;
+  let updateWasBusy = false;
+  let lastSourceRows = [];
+  const UPDATABLE = ["peatix", "wpBookings", "evemado", "jimoty", "googleForms", "kokuchpro"];
+  const updateSelection = {}; // 利用者が自分で入れ替えたチェック(platform -> true/false)。触っていない取得先は、失敗・停止中だけ自動でチェックする
+
+  // 「データを更新する」の一覧。取得状況(SourceStatus)から、取得先ごとに 更新済み / 古い / 失敗・停止中 を判定する。
+  function renderUpdateList() {
+    const now = Date.now();
+    const items = UPDATABLE.map((platform) => {
+      const rows = lastSourceRows.filter((r) => r.platform === platform);
+      let level = "bad";
+      let state = "未取得";
+      let age = "まだ取得の記録がありません";
+      if (rows.length) {
+        const rank = { ok: 0, warn: 1, bad: 2 };
+        level = rows.map((r) => sourceLevel(r, now)).reduce((a, b) => (rank[b] > rank[a] ? b : a), "ok");
+        const failed = rows.some((r) => r.status === "error");
+        state = level === "ok" ? "更新済み" : failed ? "失敗" : "古い";
+        const best = Math.max(...rows.map((r) => Date.parse(r.lastSuccessAt || "") || 0));
+        age = best ? `最後に取得できたのは ${describeAge(now - best)}` : "まだ一度も取得できていません";
+      }
+      const checked = updateSelection[platform] !== undefined ? updateSelection[platform] : level !== "ok";
+      return { platform, label: PLATFORM_LABELS[platform] || platform, level, state, age, checked };
+    });
+    const need = items.filter((it) => it.level !== "ok").length;
+    const note = document.getElementById("updateSummaryNote");
+    note.className = "source-summary-note " + (need ? "bad" : "ok");
+    note.textContent = need ? `要更新 ${need}件` : "すべて更新済み";
+    const list = document.getElementById("updateList");
+    list.innerHTML = items.map((it) => `
+      <label class="update-row">
+        <input type="checkbox" data-p="${it.platform}" ${it.checked ? "checked" : ""} ${updateBusy ? "disabled" : ""}>
+        <span class="u-name">${escapeHtml(it.label)}</span>
+        <span class="u-state ${it.level}">${it.state}</span>
+        <span class="u-age">${escapeHtml(it.age)}</span>
+      </label>`).join("");
+    list.querySelectorAll("input").forEach((cb) => {
+      cb.addEventListener("change", () => { updateSelection[cb.dataset.p] = cb.checked; refreshUpdateButton(); });
+    });
+    refreshUpdateButton();
+  }
+
+  function selectedUpdateSources() {
+    return Array.from(document.querySelectorAll("#updateList input:checked")).map((c) => c.dataset.p);
+  }
+
+  function refreshUpdateButton() {
+    const button = document.getElementById("updateNowButton");
+    const n = selectedUpdateSources().length;
+    button.disabled = updateBusy || n === 0;
+    button.textContent = updateBusy ? "更新中…" : n ? `選んだ${n}件を更新` : "更新する取得先を選んでください";
+  }
 
   function setUpdateButtonState(status) {
-    const button = document.getElementById("updateNowButton");
     const text = document.getElementById("updateStatusText");
-    const busy = status.status === "requested" || status.status === "running";
-    button.disabled = busy;
-    button.textContent = busy ? "更新中…" : "今すぐ更新(Peatix)";
+    updateBusy = status.status === "requested" || status.status === "running";
+    let message = status.message || "";
+    if (status.status === "requested") {
+      // 受付のPCが動いていれば、数秒で「更新を始めます」になる。止まっていれば、PCの起動後に始まる。
+      const beat = Date.parse(status.heartbeatAt || "");
+      if (!beat || Date.now() - beat > 3 * 60000) message = "更新を依頼しました。受付のPCが起動していないため、PCが起動すると自動で始まります。";
+    }
     text.className = "update-status" + (status.status === "error" ? " error" : status.status === "done" ? " done" : "");
-    text.textContent = status.message || "";
+    text.textContent = message;
+    renderUpdateList();
   }
 
   function pollUpdateStatus() {
     google.script.run.withSuccessHandler((status) => {
       setUpdateButtonState(status);
       if (status.status === "requested" || status.status === "running") {
-        updatePollTimer = setTimeout(pollUpdateStatus, 3000);
+        updateWasBusy = true;
+        const beat = Date.parse(status.heartbeatAt || "");
+        const offline = status.status === "requested" && (!beat || Date.now() - beat > 3 * 60000);
+        updatePollTimer = setTimeout(pollUpdateStatus, offline ? 20000 : 4000);
         return;
       }
       if (updatePollTimer) { clearTimeout(updatePollTimer); updatePollTimer = null; }
-      if (status.status === "done") load(); // 完了したら最新データを取り込む
+      if (updateWasBusy) {
+        // 更新が終わったので、取得結果を取り込み、チェックの選び直しをやめて、最新の状態から自動で選び直す。
+        updateWasBusy = false;
+        Object.keys(updateSelection).forEach((k) => delete updateSelection[k]);
+        load();
+      }
     }).fetchUpdateStatus();
   }
 
   document.getElementById("updateNowButton").addEventListener("click", () => {
-    google.script.run.withSuccessHandler((status) => {
-      setUpdateButtonState(status);
-      pollUpdateStatus();
-    }).requestPeatixUpdate();
+    const sources = selectedUpdateSources();
+    if (!sources.length) return;
+    const text = document.getElementById("updateStatusText");
+    text.className = "update-status";
+    text.textContent = "更新を依頼しています…";
+    google.script.run
+      .withSuccessHandler((status) => {
+        setUpdateButtonState(status);
+        pollUpdateStatus();
+      })
+      .withFailureHandler((err) => {
+        text.className = "update-status error";
+        text.textContent = "依頼に失敗しました: " + (err && err.message ? err.message : err);
+      })
+      .requestUpdate(sources);
   });
 
   document.getElementById("eventPickerTrigger").addEventListener("click", () => {

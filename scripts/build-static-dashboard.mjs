@@ -26,14 +26,14 @@ body = body.replace(
 // 公開ページでは「今すぐ更新(Peatix)」ボタンを出さない(専用PC側の受け取りの仕組みが動いていないため、
 // 押すと「更新をリクエストしました」のまま止まって見えた)。読み込み中の表示は、待ち時間が分かる文言にする。
 body = body.replace(/読み込み中…/g, "読み込み中…(初回は20秒ほどかかることがあります)");
-const extraStyle = "<style>.update-bar{display:none !important}</style>";
+const extraStyle = ""; // 「データを更新する」パネルは公開ページでも出す(専用PCの受付プログラム update-watcher が受け取る)
 
 const shim = `<script>
 // google.script.run 互換層: 画面コードはそのまま、Apps Script の JSON API (fetch) を呼ぶ。
 // 共有キーは共有URLの #k=... で受け取り、ブラウザに保存する(ページのソースには含めない)。
 (function () {
   const API_URL = ${JSON.stringify(apiUrl)};
-  const WRITE_FUNCTIONS = ["linkEvent", "requestPeatixUpdate"];
+  const WRITE_FUNCTIONS = ["linkEvent", "requestPeatixUpdate", "requestUpdate"];
   const hashKey = new URLSearchParams(location.hash.slice(1)).get("k");
   try { if (hashKey) localStorage.setItem("wpdash_key", hashKey); } catch (e) {}
   // 鍵(#k=...)はURLに残す。消すと、アドレスバーからURLをコピーして別のPCで開いた時に鍵が無く、

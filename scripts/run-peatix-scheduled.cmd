@@ -5,6 +5,13 @@ rem or a slow source (jimoty is slow) never blocks the others.
 cd /d "%~dp0.."
 if not exist logs mkdir logs
 echo ---- %DATE% %TIME% ---- >> logs\peatix-scheduled.log
+rem If a manual update (dashboard button, scripts\update-watcher.mjs) is running today, skip this round (they share the Peatix browser profile).
+if exist data\manual-update.lock (
+  forfiles /p data /m manual-update.lock /d 0 >nul 2>&1 && (
+    echo skipped: manual update is running >> logs\peatix-scheduled.log
+    exit /b 0
+  )
+)
 rem Pull the latest improvements from GitHub first, so every PC runs the same (latest) code.
 rem Fast-forward only: it never overwrites local changes; a failure is ignored and the current code is used.
 git pull --ff-only --quiet >> logs\peatix-scheduled.log 2>&1
