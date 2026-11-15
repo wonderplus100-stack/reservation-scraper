@@ -56,3 +56,13 @@ Write-Host "  1. scripts\peatix-relogin.cmd をダブルクリック(Peatixの2�
 Write-Host "  2. scripts\wp-relogin.cmd をダブルクリック(Wonder+公式サイトの管理画面)"
 Write-Host "  3. 取得の確認: node run.mjs --only=wpBookings"
 Write-Host "  ※ 元のPCの自動実行は、二重に動かないよう停止してください(タスク名 WonderPlus-PeatixScrape を無効化)。"
+
+Write-Host "== ダッシュボードの「データを更新する」ボタンの受付(PCにログオンした時に起動・既定は無効) =="
+$uwVbs = Join-Path $root "scripts\run-update-watcher-hidden.vbs"
+$uwAction = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('//B //Nologo "' + $uwVbs + '"')
+$uwTrigger = New-ScheduledTaskTrigger -AtLogOn
+$uwSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
+Register-ScheduledTask -TaskName "WonderPlus-UpdateWatcher" -Action $uwAction -Trigger $uwTrigger -Settings $uwSettings `
+  -Description "ダッシュボードの更新ボタンの受付(専用PC1台だけで動かす)" -Force | Out-Null
+Disable-ScheduledTask -TaskName "WonderPlus-UpdateWatcher" | Out-Null
+Write-Host "登録しました(無効の状態): WonderPlus-UpdateWatcher。launcher の 5_Start_AutoRun.cmd を実行すると有効になり、起動します。"
