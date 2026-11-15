@@ -292,6 +292,7 @@
   .src-evemado { background: #e0f5f5; color: #0e7090; }
   .set-badge { background: #e0eaff; color: #3538cd; font-weight: 700; }
   .dup-badge { background: #fff4e5; color: #b54708; font-weight: 700; }
+  .companion-badge { background: #ecfdf3; color: #067647; font-weight: 700; }
   .prepaid-badge, .stat-chip.prepaid-chip { background: #fef0c7; color: #b54708; font-weight: 700; }
   .src-other { background: #f2f4f7; color: #475467; }
   .guest-ref { color: #175cd3; }
@@ -385,7 +386,7 @@
     return {
       ...event,
       names,
-      uniqueCount: names.length,
+      uniqueCount: names.reduce((sum, n) => sum + 1 + (n.companions || 0), 0),
       sourceCounts: (event.sourceCounts || []).filter((s) => groupOfSource(s.source) === viewGroup),
       referrerCounts: []
     };
@@ -695,20 +696,23 @@
       return;
     }
     const referrerCounts = event.referrerCounts || [];
-    const prepaidCount = event.names.filter((n) => n.prepaid).length;
-    const amountSum = event.names.reduce((sum, n) => sum + (typeof n.amount === "number" ? n.amount : 0), 0);
+    // 人数・男女・料金は、同伴者(1件の申込の枚数-1)を含めて数える(同伴者は本人と同じ性別・同じ料金)
+    const weight = (n) => 1 + (n.companions || 0);
+    const countOf = (pred) => event.names.filter(pred).reduce((sum, n) => sum + weight(n), 0);
+    const prepaidCount = countOf((n) => n.prepaid);
+    const amountSum = event.names.reduce((sum, n) => sum + (typeof n.amount === "number" ? n.amount * weight(n) : 0), 0);
     container.innerHTML = `
       <div class="event-card">
         <p class="event-name">${escapeHtml(event.displayName)}</p>
         <div class="totals">
           <span class="totals-count">${event.uniqueCount}</span>
           <span class="totals-unit">名</span>
-          <span class="totals-label">(重複を除いた人数)</span>
+          <span class="totals-label">(同じ名前の重複は1名・同伴者は含む)</span>
         </div>
         <div class="stat-row">
-          <span class="stat-chip male">男性 <b>${event.names.filter((n) => n.gender === "男性").length}</b></span>
-          <span class="stat-chip female">女性 <b>${event.names.filter((n) => n.gender === "女性").length}</b></span>
-          <span class="stat-chip">不明 <b>${event.names.filter((n) => !n.gender).length}</b></span>
+          <span class="stat-chip male">男性 <b>${countOf((n) => n.gender === "男性")}</b></span>
+          <span class="stat-chip female">女性 <b>${countOf((n) => n.gender === "女性")}</b></span>
+          <span class="stat-chip">不明 <b>${countOf((n) => !n.gender)}</b></span>
           ${prepaidCount ? `<span class="stat-chip prepaid-chip">事前決済 <b>${prepaidCount}</b></span>` : ""}
           ${amountSum ? `<span class="stat-chip sum">当日の料金合計(目安) <b>${amountSum.toLocaleString("ja-JP")}円</b></span>` : ""}
         </div>
@@ -724,7 +728,8 @@
               <span class="guest-sub">
                 <span class="src-badge ${sourceClass(n.source)}">${escapeHtml(shortSource(n.source))}</span>
                 ${n.viaSet ? `<span class="src-badge set-badge" title="1部と2部の両方に参加するお客様(料金は通しのイベントで数えています)">通し</span>` : ""}
-                ${n.dupTickets > 1 ? `<span class="src-badge dup-badge" title="同じお名前で、申込が複数件ある、または1件の申込が複数枚です。人数の一覧は名前ごとに1名としています(whitekeyへの入力は、枚数分の人数で入ります)">申込に重複あり(${n.dupApplications > 1 ? "申込" + n.dupApplications + "件" : n.dupTickets + "枚"})</span>` : ""}
+                ${n.dupApplications > 1 ? `<span class="src-badge dup-badge" title="同じお名前で、別々の申込が${n.dupApplications}件あります(重複の可能性)。人数は1名として数えています">重複(申込${n.dupApplications}件)</span>` : ""}
+                ${n.companions > 0 ? `<span class="src-badge companion-badge" title="1件の申込に同伴者が含まれています。人数とwhitekeyへの入力は、同伴者を含めた人数です">同伴${n.companions}名</span>` : ""}
                 ${n.prepaid ? `<span class="src-badge prepaid-badge">事前決済</span>` : ""}
                 ${n.katakana && n.katakana !== n.name ? `<span>${escapeHtml(n.katakana)}</span>` : ""}
                 ${n.referrer ? `<span class="guest-ref">紹介: ${escapeHtml(n.referrer)}</span>` : ""}

@@ -98,6 +98,15 @@ function buildDashboardData_() {
     };
   }
 
+  // 人数 = 名前ごとの1名 + 同伴者(1件の申込に複数枚ある分)。同じ名前の別々の申込(重複)は、1名のまま。
+  function headcount_(group) {
+    let total = group.uniqueNames.size;
+    group.uniqueNames.forEach((person) => {
+      total += person.ticketCount - person.bookingKeys.length;
+    });
+    return total;
+  }
+
   function accumulateRow_(group, row) {
     const sourceKey = `${row.platform}/${row.account}`;
     group.sourceCounts.set(sourceKey, (group.sourceCounts.get(sourceKey) || 0) + 1);
@@ -288,9 +297,9 @@ function buildDashboardData_() {
       startMinutes: extractStartMinutes_(group.eventName),
       sourceCounts: Array.from(group.sourceCounts.entries()).map(([source, count]) => ({ source, count })),
       referrerCounts: Array.from(group.referrerCounts.entries()).map(([referrer, count]) => ({ referrer, count })),
-      uniqueCount: group.uniqueNames.size,
+      uniqueCount: headcount_(group),
       names: Array.from(group.uniqueNames.values())
-        .map(({ bookingKeys, ticketCount, ...rest }) => ({ ...rest, dupApplications: bookingKeys.length, dupTickets: ticketCount }))
+        .map(({ bookingKeys, ticketCount, ...rest }) => ({ ...rest, dupApplications: bookingKeys.length, dupTickets: ticketCount, companions: ticketCount - bookingKeys.length }))
         .sort((a, b) => a.name.localeCompare(b.name, "ja")),
       latestObtainedAt: group.latestObtainedAt
     };
@@ -377,7 +386,7 @@ function buildDashboardData_() {
       dateKey,
       distance: dateObj ? Math.abs(dateObj - today) : Infinity,
       rawCount: Array.from(group.sourceCounts.values()).reduce((sum, n) => sum + n, 0),
-      uniqueCount: group.uniqueNames.size,
+      uniqueCount: headcount_(group),
       names: Array.from(group.uniqueNames.values())
         .sort((a, b) => a.name.localeCompare(b.name, "ja"))
         .slice(0, 12)
@@ -400,7 +409,7 @@ function buildDashboardData_() {
       return {
         eventId: group.eventId,
         title: formatEventTitle_(group.eventName, md && md.month, md && md.day),
-        uniqueCount: group.uniqueNames.size,
+        uniqueCount: headcount_(group),
         sortKey: md ? md.month * 100 + md.day : 0
       };
     })
@@ -910,7 +919,7 @@ function doPost(e) {
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
 // 入力・集計の対象にしない予約の状態(lib/whitekeyRules.mjs の INACTIVE_STATUS と同じ。変える時は両方そろえること)。
 const INACTIVE_STATUS_ = /キャンセル|払い戻し|払戻|返金|無効|取消|不参加/;
-const DASH_CACHE_PREFIX_ = "dashboard_v14"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v15"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 
