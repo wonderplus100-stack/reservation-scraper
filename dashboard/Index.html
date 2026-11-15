@@ -837,8 +837,8 @@
     }
   }
 
-  function load() {
-    google.script.run
+  function load(fresh) {
+    const call = google.script.run
       .withSuccessHandler(render)
       .withFailureHandler((err) => {
         const message = err && err.message ? err.message : String(err);
@@ -847,8 +847,8 @@
         const box = document.getElementById("loadError");
         box.textContent = "データを読み込めませんでした。" + message;
         box.hidden = false;
-      })
-      .fetchDashboardData();
+      });
+    if (fresh) call.fetchDashboardDataFresh(); else call.fetchDashboardData();
   }
 
   // 「今すぐ更新」: スマホ等から押すと、専用PC上で常駐しているスクリプトが
@@ -919,6 +919,9 @@
       const beat = Date.parse(status.heartbeatAt || "");
       if (!beat || Date.now() - beat > 3 * 60000) message = "更新を依頼しました。受付のPCが起動していないため、PCが起動すると自動で始まります。";
     }
+    if ((status.status === "done" || status.status === "error") && Date.parse(status.updatedAt || "")) {
+      message += `(${new Date(status.updatedAt).toLocaleString("ja-JP")})`; // いつの結果か分かるように
+    }
     text.className = "update-status" + (status.status === "error" ? " error" : status.status === "done" ? " done" : "");
     text.textContent = message;
     renderUpdateList();
@@ -939,7 +942,7 @@
         // 更新が終わったので、取得結果を取り込み、チェックの選び直しをやめて、最新の状態から自動で選び直す。
         updateWasBusy = false;
         Object.keys(updateSelection).forEach((k) => delete updateSelection[k]);
-        load();
+        load(true); // 5分のキャッシュを使わず、更新後のデータで表示し直す
       }
     }).fetchUpdateStatus();
   }

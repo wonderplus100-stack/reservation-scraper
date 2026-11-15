@@ -854,6 +854,7 @@ function doGet(e) {
 // dashboardKey(B列)と一致する共有キーが無い要求は拒否する(キーは共有URLの #k= に入れる)。
 const API_FUNCTIONS_ = {
   fetchDashboardData: fetchDashboardData,
+  fetchDashboardDataFresh: fetchDashboardDataFresh,
   fetchUpdateStatus: fetchUpdateStatus,
   requestPeatixUpdate: requestPeatixUpdate,
   requestUpdate: requestUpdate,
@@ -937,6 +938,13 @@ function clearDashboardCache_() {
   const keys = [DASH_CACHE_PREFIX_ + "_n"];
   for (let i = 0; i < count; i += 1) keys.push(DASH_CACHE_PREFIX_ + "_" + i);
   cache.removeAll(keys);
+}
+
+// 更新ボタンの完了後など、5分のキャッシュを使わずに、いまのデータで組み立て直す。
+function fetchDashboardDataFresh() {
+  if (!isAuthorized_()) throw new Error("アクセス権がありません");
+  clearDashboardCache_();
+  return fetchDashboardData();
 }
 
 // ダッシュボード側のJSからポーリングして最新化するためのAPI。

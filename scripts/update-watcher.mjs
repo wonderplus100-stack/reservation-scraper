@@ -1,4 +1,5 @@
 import "dotenv/config";
+import dotenv from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -35,12 +36,25 @@ const TIMEOUT_MS = { peatix: 65, kokuchpro: 25, wpBookings: 25, jimoty: 25, evem
 const sheetId = process.env.SHEET_ID;
 if (!sheetId) throw new Error("環境変数 SHEET_ID が設定されていません");
 
+// 取得は別プロセス(run.mjs)で行う。この受付プログラムは常駐していて、起動時の .env の値を環境変数として
+// 持っているため、そのまま渡すと、後から .env を直しても(シート名の変更など)取得側に反映されない。
+// .env に書かれている項目は子プロセスに渡さず、取得のたびに .env を読み直させる。
+function freshChildEnv() {
+  const env = { ...process.env };
+  try {
+    for (const key of Object.keys(dotenv.parse(fs.readFileSync(path.join(projectRoot, ".env"))))) delete env[key];
+  } catch {
+    // .env が無ければ、そのまま
+  }
+  return env;
+}
+
 function runScrape(source) {
   return new Promise((resolve, reject) => {
     const proc = execFile(
       process.execPath,
       ["run.mjs", `--only=${source}`],
-      { cwd: projectRoot, timeout: (TIMEOUT_MS[source] || 30) * 60 * 1000, maxBuffer: 64 * 1024 * 1024 },
+      { cwd: projectRoot, env: freshChildEnv(), timeout: (TIMEOUT_MS[source] || 30) * 60 * 1000, maxBuffer: 64 * 1024 * 1024 },
       (err, stdout, stderr) => (err ? reject(new Error((stderr || stdout || err.message).slice(-300))) : resolve(stdout))
     );
     proc.stdout?.on("data", (d) => process.stdout.write(d));
