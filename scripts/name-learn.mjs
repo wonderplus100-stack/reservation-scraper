@@ -86,14 +86,18 @@ async function learnFrom(list) {
     if (!/[一-龠々]/.test(name) || !p.staff.sei || !p.staff.mei) continue;
     let seiText = "", meiText = "";
     const parts = name.split(/[\s　]+/).filter(Boolean);
-    if (parts.length >= 2) { seiText = parts[0]; meiText = parts.slice(1).join(""); }
-    else {
+    if (parts.length >= 2) {
+      const cands = (await lookupReadings("sei", parts[0])) || [];
+      if (cands.includes(p.staff.sei)) { seiText = parts[0]; meiText = parts.slice(1).join(""); }
+    } else {
       for (let k = 1; k <= Math.min(3, name.length - 1); k += 1) {
         const cands = (await lookupReadings("sei", name.slice(0, k))) || [];
         if (cands.includes(p.staff.sei)) { seiText = name.slice(0, k); meiText = name.slice(k); if (k >= 2) break; }
       }
     }
     if (!seiText || !meiText || meiText.length > 4) continue;
+    // 名の読みの長さが、漢字の数に対して妥当か(1文字あたり1〜4かな)。取り違えた別人の名を避ける
+    if (p.staff.mei.length < meiText.length || p.staff.mei.length > meiText.length * 4) continue;
     rows.push({ kind: "sei", kanji: seiText, reading: p.staff.sei });
     rows.push({ kind: "mei", kanji: meiText, reading: p.staff.mei });
   }
@@ -140,7 +144,7 @@ if (mode === "eval") {
   fs.writeFileSync("data/name-eval-wrong.json", JSON.stringify(wrong, null, 1));
   console.log("誤り", wrong.length, "件: 姓の誤り", wrong.filter((w) => !w.seiOk).length, "/ 名の誤りで辞典に正解あり", wrong.filter((w) => w.seiOk && w.inDict).length, "/ 辞典に無い", wrong.filter((w) => w.seiOk && !w.inDict).length);
 } else {
-  await loadLearnedReadings(process.env.SHEET_ID);
+  if (process.argv.includes("--merge")) await loadLearnedReadings(process.env.SHEET_ID);
   const before = learnedRows().length;
   const rows = await learnFrom(pairs);
   rows.forEach((r) => addLearnedReading(r.kind, r.kanji, r.reading));
