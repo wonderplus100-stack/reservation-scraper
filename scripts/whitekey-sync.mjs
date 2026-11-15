@@ -32,7 +32,7 @@ import { warmDashboardCache } from "../lib/dashboardWarm.mjs";
 //  - 動かすPCは1台だけにする: .env に WHITEKEY_ENABLED=true があるPCでのみ動く(他のPCは何もしない)。
 //
 // 使い方: node scripts/whitekey-sync.mjs [--commit] [--now=2026-11-30T20:00] [--event=<公式イベントID>] [--limit=N]
-//   --event: スケジュールに関係なく、そのイベントを対象にする(試験用)。--now: 時刻を指定して確認する(記録はしない)。
+//   --event: スケジュールに関係なく、そのイベントを対象にする(試験用。カンマ区切りで複数指定できる)。--now: 時刻を指定して確認する(記録はしない)。
 const PENDING_REFRESH_MS = 60 * 60 * 1000;
 const RUNNER = "このPC";
 // 入力する取得先。Peatixは、カフェ会系・朝活・レギュラー異業種交流会のイベントだけ(lib/whitekeyRules.mjs)。
@@ -120,7 +120,7 @@ async function main() {
   const simulated = Boolean(arg("now")) || Boolean(forcedEvent);
   const stamps = readStamps();
   const { events: dueEventIds, keys: slotKeys, slots } = forcedEvent
-    ? { events: new Set([forcedEvent]), keys: [], slots: ["指定イベント"] }
+    ? { events: new Set(forcedEvent.split(",").map((s) => s.trim()).filter(Boolean)), keys: [], slots: ["指定イベント"] }
     : dueSlots(official, now, stamps);
   const due = official.filter((e) => dueEventIds.has(e.canonicalEventId));
   const dueIds = new Set(due.map((e) => e.canonicalEventId));
