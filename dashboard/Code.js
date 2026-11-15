@@ -119,9 +119,17 @@ function buildDashboardData_() {
       // 自動入力で男女を判定する時と同じ考え方で表示する(分からなければ男性として入力される)。
       group.uniqueNames.set(normalizedName, {
         name, katakana, referrer: referrerName, source: sourceKey, sources: [sourceKey],
+        bookingKeys: [String(row.bookingKey || "")], ticketCount: Math.max(Number(row.quantity) || 1, 1),
         ...personInfo_(group, row)
       });
     } else if (existing) {
+      // 同じ名前で別の申込(予約番号が違う)があれば、申込数と枚数を足す(画面に「申込に重複あり」と出す)。
+      // 同じ予約番号の行が重複して入っていても、二重には数えない。
+      const bookingKey = String(row.bookingKey || "");
+      if (bookingKey && existing.bookingKeys.indexOf(bookingKey) === -1) {
+        existing.bookingKeys.push(bookingKey);
+        existing.ticketCount += Math.max(Number(row.quantity) || 1, 1);
+      }
       // 同じ人の別の行に、媒体の正しい金額・性別があれば、推定値より優先して補う
       const info = personInfo_(group, row);
       if (info.gender && (!existing.gender || (existing.genderGuess && !info.genderGuess))) {
@@ -281,7 +289,9 @@ function buildDashboardData_() {
       sourceCounts: Array.from(group.sourceCounts.entries()).map(([source, count]) => ({ source, count })),
       referrerCounts: Array.from(group.referrerCounts.entries()).map(([referrer, count]) => ({ referrer, count })),
       uniqueCount: group.uniqueNames.size,
-      names: Array.from(group.uniqueNames.values()).sort((a, b) => a.name.localeCompare(b.name, "ja")),
+      names: Array.from(group.uniqueNames.values())
+        .map(({ bookingKeys, ticketCount, ...rest }) => ({ ...rest, dupApplications: bookingKeys.length, dupTickets: ticketCount }))
+        .sort((a, b) => a.name.localeCompare(b.name, "ja")),
       latestObtainedAt: group.latestObtainedAt
     };
   });
@@ -900,7 +910,7 @@ function doPost(e) {
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
 // 入力・集計の対象にしない予約の状態(lib/whitekeyRules.mjs の INACTIVE_STATUS と同じ。変える時は両方そろえること)。
 const INACTIVE_STATUS_ = /キャンセル|払い戻し|払戻|返金|無効|取消|不参加/;
-const DASH_CACHE_PREFIX_ = "dashboard_v13"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v14"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 

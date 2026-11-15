@@ -291,6 +291,7 @@
   .src-form { background: #f1eaff; color: #6941c6; }
   .src-evemado { background: #e0f5f5; color: #0e7090; }
   .set-badge { background: #e0eaff; color: #3538cd; font-weight: 700; }
+  .dup-badge { background: #fff4e5; color: #b54708; font-weight: 700; }
   .prepaid-badge, .stat-chip.prepaid-chip { background: #fef0c7; color: #b54708; font-weight: 700; }
   .src-other { background: #f2f4f7; color: #475467; }
   .guest-ref { color: #175cd3; }
@@ -723,6 +724,7 @@
               <span class="guest-sub">
                 <span class="src-badge ${sourceClass(n.source)}">${escapeHtml(shortSource(n.source))}</span>
                 ${n.viaSet ? `<span class="src-badge set-badge" title="1部と2部の両方に参加するお客様(料金は通しのイベントで数えています)">通し</span>` : ""}
+                ${n.dupTickets > 1 ? `<span class="src-badge dup-badge" title="同じお名前で、申込が複数件ある、または1件の申込が複数枚です。人数の一覧は名前ごとに1名としています(whitekeyへの入力は、枚数分の人数で入ります)">申込に重複あり(${n.dupApplications > 1 ? "申込" + n.dupApplications + "件" : n.dupTickets + "枚"})</span>` : ""}
                 ${n.prepaid ? `<span class="src-badge prepaid-badge">事前決済</span>` : ""}
                 ${n.katakana && n.katakana !== n.name ? `<span>${escapeHtml(n.katakana)}</span>` : ""}
                 ${n.referrer ? `<span class="guest-ref">紹介: ${escapeHtml(n.referrer)}</span>` : ""}
