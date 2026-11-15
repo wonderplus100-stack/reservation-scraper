@@ -107,6 +107,10 @@
   }
   .update-body { padding: 0 14px 12px; }
   .update-help { font-size: 12.5px; color: #475467; margin: 0 0 8px; }
+  .update-receiver { font-size: 12px; margin: 0 0 8px; padding: 6px 10px; border-radius: 8px; background: #f2f4f7; color: #344054; line-height: 1.6; }
+  .update-receiver.on { background: #ecfdf3; color: #067647; }
+  .update-receiver.off { background: #fef3f2; color: #b42318; }
+  .update-receiver.warn { background: #fffaeb; color: #b54708; }
   .update-note { font-size: 11.5px; color: #667085; margin: 10px 0 0; line-height: 1.6; }
   .update-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
   .update-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-top: 1px solid #f2f4f7; font-size: 14px; cursor: pointer; }
@@ -252,6 +256,7 @@
 <details class="source-panel update-panel" id="updatePanel">
   <summary><span>データを更新する</span><span class="source-summary-note" id="updateSummaryNote"></span></summary>
   <div class="update-body">
+    <p class="update-receiver" id="receiverStatus">専用PCの状態を確認しています…</p>
     <p class="update-help">取得に失敗・停止している取得先だけ、自動でチェックが入ります。更新済みの取得先は、取得し直したい時だけチェックしてください。</p>
     <div id="updateList"></div>
     <div class="update-actions">
@@ -914,6 +919,7 @@
     const text = document.getElementById("updateStatusText");
     updateBusy = status.status === "requested" || status.status === "running";
     let message = status.message || "";
+    renderReceiverStatus(status);
     if (status.status === "requested") {
       // 受付のPCが動いていれば、数秒で「更新を始めます」になる。止まっていれば、PCの起動後に始まる。
       const beat = Date.parse(status.heartbeatAt || "");
@@ -925,6 +931,44 @@
     text.className = "update-status" + (status.status === "error" ? " error" : status.status === "done" ? " done" : "");
     text.textContent = message;
     renderUpdateList();
+  }
+
+  // 専用PC(更新ボタンの受付プログラム)の稼働状況。受付プログラムが60秒おきに書く「生きている印」で判断する。
+  // GitHub上の最新の版(公開リポジトリの main の先頭)。専用PCが動かしている版と比べて、古ければ案内する。
+  let latestMainSha = "";
+  let latestMainFetchedAt = 0;
+  function fetchLatestMain(done) {
+    if (latestMainSha && Date.now() - latestMainFetchedAt < 5 * 60000) { done(); return; }
+    fetch("https://api.github.com/repos/wonderplus100-stack/reservation-scraper/commits/main", { headers: { Accept: "application/vnd.github+json" } })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))))
+      .then((j) => { latestMainSha = String(j.sha || "").slice(0, 8); latestMainFetchedAt = Date.now(); })
+      .catch(() => {})
+      .then(done);
+  }
+  function renderReceiverStatus(status) {
+    fetchLatestMain(() => renderReceiverStatusNow(status));
+  }
+  function renderReceiverStatusNow(status) {
+    const el = document.getElementById("receiverStatus");
+    const beat = Date.parse(status.heartbeatAt || "");
+    if (!beat) { el.className = "update-receiver off"; el.textContent = "専用PC: まだ応答の記録がありません(受付プログラムが起動していません)"; return; }
+    let info = {};
+    try { info = JSON.parse(status.heartbeatInfo || "{}"); } catch (e) {}
+    const online = Date.now() - beat <= 3 * 60000;
+    const parts = [online ? "専用PC: 稼働中" : "専用PC: 停止中の可能性(3分以上、応答がありません)", "最終応答 " + describeAge(Date.now() - beat)];
+    if (info.host) parts.push(info.host);
+    if (info.loaded) parts.push("プログラムの版 " + info.loaded);
+    // 最新版との比較。専用PCは、依頼を受けた時と30分おきに最新版を取り込み、必要なら自動で再起動する。
+    const behind = latestMainSha && info.loaded && latestMainSha !== info.loaded && latestMainSha !== info.head;
+    const pending = info.head && info.loaded && info.head !== info.loaded;
+    let note = "";
+    if (online && behind) note = "最新版(" + latestMainSha + ")に更新が必要です。30分以内に自動で入れ替わります。";
+    else if (online && pending) note = "最新版を取り込み済みです。受付プログラムは次の確認で入れ替わります。";
+    el.className = "update-receiver " + (online ? (behind || pending ? "warn" : "on") : "off");
+    el.textContent = parts.join(" / ") + (note ? " — " + note : "");
+  }
+  function refreshReceiverStatus() {
+    google.script.run.withSuccessHandler(renderReceiverStatus).withFailureHandler(() => {}).fetchUpdateStatus();
   }
 
   function pollUpdateStatus() {
@@ -992,4 +1036,5 @@
   load();
   pollUpdateStatus(); // ページを開いた時点で他の人が更新中なら状況を表示する
   setInterval(load, REFRESH_INTERVAL_MS);
+  setInterval(refreshReceiverStatus, 60000);
 </script>

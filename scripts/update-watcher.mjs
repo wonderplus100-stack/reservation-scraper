@@ -1,6 +1,7 @@
 import "dotenv/config";
 import dotenv from "dotenv";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -35,6 +36,50 @@ const TIMEOUT_MS = { peatix: 65, kokuchpro: 25, wpBookings: 25, jimoty: 25, evem
 
 const sheetId = process.env.SHEET_ID;
 if (!sheetId) throw new Error("環境変数 SHEET_ID が設定されていません");
+
+// ---- 最新のプログラムの取り込みと、自動の再起動 ----
+// 依頼を受けるたび(と、待機中は30分おき)に git pull で最新のプログラムを取り込む。
+// この受付プログラム自身(や、読み込んでいる部品)が変わった時は、終了して、起動用のcmd(run-update-watcher.cmd)に
+// 立ち上げ直してもらう。取得(run.mjs)は毎回別プロセスなので、pull するだけで最新のプログラムが使われる。
+const STARTED_AT = new Date().toISOString();
+const RESTART_EXIT_CODE = 75;
+const IDLE_PULL_INTERVAL_MS = 30 * 60 * 1000;
+const RELOAD_FILES = /^(scripts\/update-watcher\.mjs|lib\/|scrapers\/peatix\.mjs|package(-lock)?\.json)/;
+
+function git(args) {
+  return new Promise((resolve) => {
+    execFile("git", args, { cwd: projectRoot, timeout: 120000 }, (err, stdout) => resolve(err ? null : String(stdout).trim()));
+  });
+}
+const shortHead = async () => ((await git(["rev-parse", "--short", "HEAD"])) || "").slice(0, 8);
+let loadedHead = "";
+
+// 取り込めなかった時(手元に変更がある・通信できない等)は、何もせず今のプログラムで続ける。
+async function pullLatest() {
+  const before = await shortHead();
+  await git(["pull", "--ff-only", "--quiet"]);
+  const after = await shortHead();
+  if (before && after && before !== after) {
+    console.log(`[update-watcher] 最新のプログラムを取り込みました: ${before} → ${after}`);
+    const changed = ((await git(["diff", "--name-only", before, after])) || "").split(/\r?\n/);
+    if (changed.some((f) => /^package(-lock)?\.json$/.test(f))) {
+      await new Promise((resolve) => execFile("npm", ["install", "--no-audit", "--no-fund", "--silent"], { cwd: projectRoot, shell: true, timeout: 10 * 60 * 1000 }, () => resolve()));
+    }
+  }
+}
+
+// 起動した時点の版から今の版までの間に、この受付プログラムに関わるファイルが変わったか。
+async function needsRestart() {
+  const head = await shortHead();
+  if (!loadedHead || !head || head === loadedHead) return false;
+  const changed = ((await git(["diff", "--name-only", loadedHead, head])) || "").split(/\r?\n/);
+  return changed.some((f) => RELOAD_FILES.test(f));
+}
+
+async function heartbeat() {
+  const head = await shortHead();
+  await writeUpdateHeartbeat(sheetId, JSON.stringify({ host: os.hostname(), loaded: loadedHead, head, startedAt: STARTED_AT }));
+}
 
 // 取得は別プロセス(run.mjs)で行う。この受付プログラムは常駐していて、起動時の .env の値を環境変数として
 // 持っているため、そのまま渡すと、後から .env を直しても(シート名の変更など)取得側に反映されない。
@@ -147,19 +192,35 @@ async function handleUpdateRequest() {
 }
 
 async function loop() {
-  console.log(`[update-watcher] 起動しました。${POLL_INTERVAL_MS / 1000}秒おきに更新リクエストを確認します。`);
+  loadedHead = await shortHead();
+  console.log(`[update-watcher] 起動しました(プログラムの版 ${loadedHead || "不明"})。${POLL_INTERVAL_MS / 1000}秒おきに更新リクエストを確認します。`);
   let lastBeat = 0;
+  let lastPull = Date.now();
   for (;;) {
     try {
       if (Date.now() - lastBeat > HEARTBEAT_INTERVAL_MS) {
-        await writeUpdateHeartbeat(sheetId);
+        await heartbeat();
         lastBeat = Date.now();
       }
       const control = await readUpdateControl(sheetId);
       if (control.status === "requested") {
         console.log(`[update-watcher] 更新リクエストを検知しました: ${control.sources}`);
+        await pullLatest();
+        lastPull = Date.now();
+        if (await needsRestart()) {
+          // 依頼は「requested」のまま残るので、立ち上げ直した受付プログラムが処理する。
+          console.log("[update-watcher] 受付プログラムが更新されたため、再起動します");
+          process.exit(RESTART_EXIT_CODE);
+        }
         await handleUpdateRequest();
         lastBeat = 0;
+      } else if (control.status !== "running" && Date.now() - lastPull > IDLE_PULL_INTERVAL_MS) {
+        await pullLatest();
+        lastPull = Date.now();
+        if (await needsRestart()) {
+          console.log("[update-watcher] 受付プログラムが更新されたため、再起動します");
+          process.exit(RESTART_EXIT_CODE);
+        }
       } else if (control.status === "running") {
         // 前回、この受付プログラムが途中で止まった(PCの再起動など)ままの状態。誰も処理していないので、解除する。
         const age = Date.now() - Date.parse(control.updatedAt || "");

@@ -21,7 +21,7 @@ const EVENT_MASTER_HEADERS = ["canonicalEventId", "canonicalEventName", "platfor
 const SOURCE_STATUS_SHEET = "SourceStatus";
 const UPDATE_CONTROL_SHEET = "UpdateControl";
 // sources: 更新を頼まれた取得先(platform名をカンマ区切り) / heartbeatAt: 専用PCの受付プログラムが生きている印(PC側が書く)
-const UPDATE_CONTROL_HEADERS = ["status", "message", "requestedAt", "updatedAt", "sources", "heartbeatAt"];
+const UPDATE_CONTROL_HEADERS = ["status", "message", "requestedAt", "updatedAt", "sources", "heartbeatAt", "heartbeatInfo"];
 // ボタンから更新を頼める取得先(scrapers/ の名前)。これ以外は受け付けない。
 const UPDATABLE_SOURCES_ = ["peatix", "wpBookings", "evemado", "jimoty", "googleForms", "kokuchpro"];
 
@@ -787,7 +787,8 @@ function readUpdateControl_() {
     requestedAt: iso(values[2]),
     updatedAt: iso(values[3]),
     sources: String(values[4] || ""),
-    heartbeatAt: iso(values[5])
+    heartbeatAt: iso(values[5]),
+    heartbeatInfo: String(values[6] || "") // 専用PCの受付プログラムが書く: PC名・動いている版(JSON)
   };
 }
 
