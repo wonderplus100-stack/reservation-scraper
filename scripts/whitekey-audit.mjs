@@ -29,10 +29,16 @@ const wantedEvents = new Set(official.filter((e) => { const d = dayOfLedger({ ev
 const { entries } = await buildEntries({ raw, official, ledger: {}, sources: ["kokuchpro", "wpBookings", "peatix"], eventFilter: (e) => wantedEvents.has(e.canonicalEventId) });
 const expectedByKey = new Map(entries.map((e) => [e.bookingKey, e]));
 
-const wk = await openWhitekey();
+const RAW_PATH = "data/whitekey-audit-raw.json";
+const offline = process.argv.includes("--offline"); // 保存済みの読み取り結果(前回の実行)で、照合だけやり直す
 const regsByParty = new Map();
 const partyInfo = new Map();
-try {
+const wk = offline ? null : await openWhitekey();
+if (offline) {
+  const saved = JSON.parse(fs.readFileSync(RAW_PATH, "utf8"));
+  Object.entries(saved.regs).forEach(([k, v]) => regsByParty.set(k, v));
+  Object.entries(saved.info).forEach(([k, v]) => partyInfo.set(k, v));
+} else try {
   await openPartyList(wk.page);
   const dates = [...new Set(ledger.map((l) => ymd(dayOfLedger(l))))].sort();
   for (const date of dates) {
@@ -48,6 +54,7 @@ try {
 } finally {
   await wk.close();
 }
+if (!offline) fs.writeFileSync(RAW_PATH, JSON.stringify({ regs: Object.fromEntries(regsByParty), info: Object.fromEntries(partyInfo) }));
 
 const seiOf = (kana) => normKana(String(kana).split(/[\s　]/)[0]);
 const problems = [];
@@ -57,39 +64,63 @@ for (const l of ledger) {
   const exp = expectedByKey.get(l.bookingKey);
   const info = partyInfo.get(l.partycode) || {};
   if (!exp) { problems.push({ level: "要確認", ledger: l, why: "台帳の予約が、いまの予約データに見つかりません(キャンセル・変更の可能性)" }); continue; }
+  // 台帳に記録した姓(入力した時の読み)で始まる受付(完了)を、人数分探す。入力後に読みのルールを変えても、入れた時の姓で照合できる。
   const used = new Set();
-  exp.people.forEach((person, i) => {
-    const ours = normKana(person.sei + (/^[0-9]+$/.test(person.mei) ? "" : person.mei));
-    // 完了の受付から、姓名が一致するものを探す(番号付きの名は、姓+番号で探す)
-    const hit = regs.find((r) => !used.has(r) && r.status === "完了" && normKana(r.kana) === ours) ||
-      regs.find((r) => !used.has(r) && r.status === "完了" && seiOf(r.kana) === normKana(person.sei) && /[0-9]/.test(r.kana));
-    const base = { date: info.date || "", time: info.time || "", hall: (info.hall || "").slice(0, 10), platform: exp.platform, name: exp.originalName, person: i === 0 ? "本人" : `同伴${i}`, ours: `${person.sei} ${person.mei}` };
-    if (!hit) { rowsOut.push({ ...base, result: "NG", detail: "whitekeyに見つかりません" }); problems.push({ level: "NG", ledger: l, why: `whitekeyに見つかりません: ${base.ours}` }); return; }
-    used.add(hit);
+  const n = Number(l.people || 1);
+  const found = [];
+  for (let i = 0; i < n; i += 1) {
+    const sexExp = exp.sexkbn === "2" ? "女" : "男";
+    const pool = regs.filter((r) => !used.has(r) && r.status === "完了" && normKana(r.kana).startsWith(normKana(l.sei)));
+    const rank = (r) => (r.gender === sexExp ? 0 : 2) + (i > 0 || r.keiyu === exp.keiyu.label ? 0 : 1) + (/[0-9０-９]/.test(r.kana) === (i > 0) ? 0 : 0.5);
+    const hit = pool.sort((a, b) => rank(a) - rank(b))[0];
+    if (hit) { used.add(hit); found.push(hit); }
+  }
+  const base = { date: info.date || "", time: info.time || "", hall: (info.hall || "").slice(0, 10), platform: exp.platform, name: exp.originalName };
+  if (found.length < n) {
+    rowsOut.push({ ...base, person: "本人", ours: l.sei, result: "NG", detail: `whitekeyに${found.length}/${n}名しか見つかりません` });
+    problems.push({ level: "NG", ledger: l, why: `whitekeyに見つかりません(${found.length}/${n}名): ${l.sei}` });
+  }
+  found.forEach((hit, i) => {
     const issues = [];
     const sex = exp.sexkbn === "2" ? "女" : "男";
     if (hit.gender !== sex) issues.push(`性別 ${hit.gender}(期待 ${sex})`);
-    if (Number(hit.fee || 0) !== Number(exp.fee)) issues.push(`料金 ${hit.fee}(期待 ${exp.fee})`);
+    if (Number(hit.fee || 0) !== Number(l.fee)) issues.push(`料金 ${hit.fee}(台帳 ${l.fee})`);
     if (String(hit.age) !== "25") issues.push(`年齢 ${hit.age}`);
     if (String(hit.tel) !== "00000000000") issues.push(`電話 ${hit.tel}`);
     if (i === 0 && hit.keiyu !== exp.keiyu.label) issues.push(`きっかけ ${hit.keiyu}(期待 ${exp.keiyu.label})`);
-    rowsOut.push({ ...base, result: issues.length ? "NG" : "OK", detail: issues.join(" / ") || `${hit.kana} ${sex} ${hit.fee}円 ${hit.keiyu || "(同伴)"}` });
-    if (issues.length) problems.push({ level: "NG", ledger: l, why: `${base.ours}: ${issues.join(" / ")}` });
+    // 入れた後にルールが変わった(Jua Partyは事前決済=0円)ものは、別に知らせる
+    const note = Number(exp.fee) !== Number(l.fee) && Number(hit.fee || 0) === Number(l.fee) ? `※現在のルールでは料金 ${exp.fee}円(入力時 ${l.fee}円)` : "";
+    rowsOut.push({ ...base, person: i === 0 ? "本人" : `同伴${i}`, ours: hit.kana, result: issues.length ? "NG" : note ? "要確認" : "OK", detail: issues.join(" / ") || note || `${hit.kana} ${sex} ${hit.fee}円 ${hit.keiyu || "(同伴)"}` });
+    if (issues.length) problems.push({ level: "NG", ledger: l, why: `${hit.kana}: ${issues.join(" / ")}` });
+    else if (note) problems.push({ level: "要確認", ledger: l, why: `${hit.kana}: ${note}` });
   });
 }
 
-// 二重入力の疑い: 同じパーティーで、同じ姓・性別・きっかけの受付(完了)が2件以上 → 自動入力のものが含まれる場合
+// 二重入力の疑い: 同じパーティーで、同じ性別の受付(完了)のうち、カナがほぼ同じ(番号を除き、違いが2文字以内)2件。
+// 読みが少し違うだけの同じ人(「ドロノワ マシロ」と「ドロノワ マサヨ」、「イトウ」と「イト」)を拾う。片方が自動入力のものを含む組だけ出す。
+const normPlain = (k) => normKana(String(k).replace(/[0-9０-９]/g, ""));
+const dist = (a, b) => {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i += 1) for (let j = 1; j <= b.length; j += 1) dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return dp[a.length][b.length];
+};
 const ledgerSeiByParty = new Map();
 for (const l of ledger) (ledgerSeiByParty.get(l.partycode) || ledgerSeiByParty.set(l.partycode, new Set()).get(l.partycode)).add(normKana(l.sei));
 const suspects = [];
 for (const [code, regs] of regsByParty) {
-  const done = regs.filter((r) => r.status === "完了" && r.keiyu);
-  const groups = new Map();
-  for (const r of done) { const k = `${seiOf(r.kana)}|${r.gender}|${r.keiyu}`; (groups.get(k) || groups.set(k, []).get(k)).push(r); }
-  for (const [k, list] of groups) {
-    if (list.length < 2) continue;
-    if (!ledgerSeiByParty.get(code)?.has(k.split("|")[0])) continue;
-    suspects.push({ code, info: partyInfo.get(code) || {}, list: list.map((r) => `${r.kana}`), key: k });
+  const done = regs.filter((r) => r.status === "完了");
+  const ours = (r) => [...(ledgerSeiByParty.get(code) || [])].some((s) => normKana(r.kana).startsWith(s));
+  for (let i = 0; i < done.length; i += 1) {
+    for (let j = i + 1; j < done.length; j += 1) {
+      const a = done[i], b = done[j];
+      if (a.gender !== b.gender) continue;
+      const pa = normPlain(a.kana), pb = normPlain(b.kana);
+      if (pa.length < 4 || pb.length < 4) continue;
+      if (dist(pa, pb) > 2) continue;
+      if (!ours(a) && !ours(b)) continue;
+      suspects.push({ code, info: partyInfo.get(code) || {}, list: [`${a.kana}(${a.keiyu || "-"})`, `${b.kana}(${b.keiyu || "-"})`] });
+    }
   }
 }
 
@@ -97,8 +128,9 @@ const cell = (v) => (/[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""'
 fs.writeFileSync("data/whitekey-audit.csv", "﻿" + ["結果,日付,開始,会場,取得先,元の氏名,対象,入力した読み,内容", ...rowsOut.map((r) => [r.result, r.date, r.time, r.hall, r.platform, r.name, r.person, r.ours, r.detail].map(cell).join(","))].join("\r\n"));
 fs.writeFileSync("data/whitekey-audit-suspects.json", JSON.stringify(suspects, null, 1));
 const ok = rowsOut.filter((r) => r.result === "OK").length;
+const check = rowsOut.filter((r) => r.result === "要確認").length;
 const ng = rowsOut.filter((r) => r.result === "NG").length;
-console.log(`照合: ${rowsOut.length}人分 / OK ${ok} / NG ${ng} / 台帳の予約が見つからない ${problems.filter((p) => p.level === "要確認").length}`);
+console.log(`照合: ${rowsOut.length}人分 / OK ${ok} / 要確認(ルール変更) ${check} / NG ${ng} / 台帳の予約が見つからない ${problems.filter((p) => p.level === "要確認").length}`);
 for (const p of problems.slice(0, 30)) console.log(`  [${p.level}] ${p.ledger.eventDate} ${p.ledger.venue} ${p.ledger.time} ${p.ledger.name}: ${p.why}`);
 console.log(`二重入力の疑い(同じ姓・性別・きっかけが2件以上): ${suspects.length}組`);
 for (const s of suspects.slice(0, 30)) console.log(`  ${s.info.date} ${s.info.time} ${(s.info.hall || "").slice(0, 8)}: ${s.list.join(" / ")}`);

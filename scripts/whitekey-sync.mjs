@@ -43,6 +43,13 @@ function arg(name) {
   return hit ? hit.slice(name.length + 3) : "";
 }
 
+function editDistance(a, b) {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i += 1) for (let j = 1; j <= b.length; j += 1) dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return dp[a.length][b.length];
+}
+
 const ymd = (d) => `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
 
 async function reportStatus(sheetId, { ok, message, rowCount }) {
@@ -252,7 +259,15 @@ async function main() {
       }
       if (holdSameSei && !findDuplicate(entry, registrantsByParty.get(party.partycode))) {
         const sei = normKana(entry.people[0].sei);
-        const same = registrantsByParty.get(party.partycode).find((r) => r.status === "完了" && normKana(String(r.kana).split(/[\s　]/)[0]) === sei);
+        // 同じ姓、または姓名全体のカナがほぼ同じ(違いが2文字以内・同じ性別)受付を「同じ人かもしれない」として保留する
+        // (読みの違いで「イトウ/イト」「カリノ/カノ」のように少しずれた同じ人を、二重に入力しないため)
+        const ours = normKana(entry.people[0].sei + (/^[0-9]+$/.test(entry.people[0].mei) ? "" : entry.people[0].mei));
+        const same = registrantsByParty.get(party.partycode).find((r) => {
+          if (r.status !== "完了") return false;
+          if (normKana(String(r.kana).split(/[\s　]/)[0]) === sei) return true;
+          const theirs = normKana(String(r.kana).replace(/[0-9０-９]/g, ""));
+          return r.gender === (entry.sexkbn === "2" ? "女" : "男") && ours.length >= 4 && theirs.length >= 4 && editDistance(ours, theirs) <= 2;
+        });
         if (same) {
           held.push({ date: `${entry.month}/${entry.day}`, venue: entry.venue, time: entry.time, partycode: party.partycode, platform: entry.platform, name: entry.originalName, ours: entry.people.map((p) => p.sei + " " + p.mei).join(" + "), existing: `${same.kana}(${same.keiyu})` });
           console.log(`  - 同じ姓の受付があるため保留(要確認): ${entry.originalName} → ${entry.people[0].sei} ${entry.people[0].mei} / 既存: ${same.kana}(${same.keiyu}) ${entry.month}/${entry.day} ${entry.venue} ${entry.time}`);
