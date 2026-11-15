@@ -508,8 +508,8 @@ function personInfo_(group, row) {
       amountGuess = true;
     }
   }
-  // 事前決済(チケット名に「事前決済」を含む)は支払い済みなので、料金は0円(lib/whitekeyPlan.mjs の isPrepaid と同じ)。
-  const prepaid = /事前決済/.test(String(row.ticketName || ""));
+  // 事前決済(チケット名に「事前決済」を含む / Peatix「Jua Party」は全て事前決済)は支払い済みなので、料金は0円(lib/whitekeyPlan.mjs の isPrepaid と同じ)。
+  const prepaid = /事前決済/.test(String(row.ticketName || "")) || (String(row.platform || "") === "peatix" && /jua/i.test(String(row.account || "")));
   if (prepaid) {
     paidAmount = amount;
     amount = 0;
@@ -919,7 +919,7 @@ function doPost(e) {
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
 // 入力・集計の対象にしない予約の状態(lib/whitekeyRules.mjs の INACTIVE_STATUS と同じ。変える時は両方そろえること)。
 const INACTIVE_STATUS_ = /キャンセル|払い戻し|払戻|返金|無効|取消|不参加/;
-const DASH_CACHE_PREFIX_ = "dashboard_v15"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v16"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 

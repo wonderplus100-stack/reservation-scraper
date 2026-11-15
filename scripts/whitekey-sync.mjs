@@ -13,9 +13,9 @@ import {
 } from "../lib/sheetsClient.mjs";
 import { fetchEventPostIds } from "../lib/eventPrices.mjs";
 import { buildEntries, isUpcoming } from "../lib/whitekeyPlan.mjs";
-import { annotateParties, findDuplicate, matchParty } from "../lib/whitekeyMatch.mjs";
+import { annotateParties, findDuplicate, matchParty, normKana } from "../lib/whitekeyMatch.mjs";
 import { openPartyList, openWhitekey, readParties, readRegistrants, showDate } from "../lib/whitekeyClient.mjs";
-import { fillRegistration, leaveWithoutRegistering, openRegistration, readBackRegistration, submitRegistration } from "../lib/whitekeyEntry.mjs";
+import { fillRegistration, leaveWithoutRegistering, openRegistration, readBackRegistration, returnToList, submitRegistration } from "../lib/whitekeyEntry.mjs";
 import { collectForEvents } from "../scrapers/wpBookings.mjs";
 import { collectForPlatformEventIds } from "../scrapers/kokuchpro.mjs";
 import { collectForPeatixEvents } from "../scrapers/peatix.mjs";
@@ -102,12 +102,19 @@ async function main() {
   setTimeout(() => {
     console.error("whitekey自動入力: 15分を超えたため強制終了します");
     process.exit(2);
-  }, 15 * 60 * 1000).unref();
+  }, (Number(arg("timeout")) || 15) * 60 * 1000).unref();
   const sheetId = process.env.SHEET_ID;
   const commit = process.argv.includes("--commit") || process.env.WHITEKEY_COMMIT === "true";
   const now = arg("now") ? new Date(arg("now")) : new Date();
   const forcedEvent = arg("event");
   const limit = Number(arg("limit")) || 40; // 1回に入れる最大件数(想定外の大量入力を防ぐ上限)
+  // --no-refresh: 対象イベントの予約を取り直さず、RawData(定期取得の最新)で入力する(まとめて入力する時に、取り直しの待ちを省く)
+  // --hold-same-sei: すでに同じ姓の受付(完了)が同じパーティーにある予約は、入力せず保留して一覧に出す(読みの違いによる二重入力を避ける。
+  //   姓名の完全一致での重複判定は、従来どおり常に行う)。保留は data/whitekey-held.json に書き出す。
+  // --timeout=分: この実行の上限時間(既定15分)
+  const noRefresh = process.argv.includes("--no-refresh");
+  const holdSameSei = process.argv.includes("--hold-same-sei");
+  const held = [];
 
   const [official, raw, ledger, platformEventMap] = await Promise.all([
     readSheetAsObjects(sheetId, OFFICIAL_EVENTS_SHEET),
@@ -142,7 +149,7 @@ async function main() {
   try {
     // 1. 最新の予約を取り直す(失敗しても、直近のRawDataで続ける)
     let overlay = raw;
-    if (due.length > 0) {
+    if (due.length > 0 && !noRefresh) {
       const fresh = [];
       const freshPlatformEventIds = new Set();
       const freshPeatixIds = new Set();
@@ -243,6 +250,15 @@ async function main() {
         registrantsByParty.set(party.partycode, await readRegistrants(wk.page, party.partycode));
         shownDate = null; // 読み取り後は、一覧が今日の日付に戻る
       }
+      if (holdSameSei && !findDuplicate(entry, registrantsByParty.get(party.partycode))) {
+        const sei = normKana(entry.people[0].sei);
+        const same = registrantsByParty.get(party.partycode).find((r) => r.status === "完了" && normKana(String(r.kana).split(/[\s　]/)[0]) === sei);
+        if (same) {
+          held.push({ date: `${entry.month}/${entry.day}`, venue: entry.venue, time: entry.time, partycode: party.partycode, platform: entry.platform, name: entry.originalName, ours: entry.people.map((p) => p.sei + " " + p.mei).join(" + "), existing: `${same.kana}(${same.keiyu})` });
+          console.log(`  - 同じ姓の受付があるため保留(要確認): ${entry.originalName} → ${entry.people[0].sei} ${entry.people[0].mei} / 既存: ${same.kana}(${same.keiyu}) ${entry.month}/${entry.day} ${entry.venue} ${entry.time}`);
+          continue;
+        }
+      }
       const existing = findDuplicate(entry, registrantsByParty.get(party.partycode));
       if (existing) {
         duplicates += 1;
@@ -273,7 +289,7 @@ async function main() {
         ledger[entry.bookingKey] = ledgerRow;
         entered += 1;
         // 一覧に戻り、完了人数が増えたかで登録を確認する
-        if (!(await wk.page.locator('input[name="searchInputDate"]').count())) await leaveWithoutRegistering(wk.page);
+        await returnToList(wk.page);
         shownDate = null;
         partiesByDate.delete(date);
         const after = (await loadParties(date)).find((p) => p.partycode === party.partycode);
@@ -294,6 +310,14 @@ async function main() {
     if (!stopped) markDone();
     const ok = !stopped;
     await reportStatus(sheetId, { ok, rowCount: entered, message: stopped || notes.join(" / ") });
+    if (held.length > 0) {
+      fs.mkdirSync("data", { recursive: true });
+      const heldPath = path.resolve("data", "whitekey-held.json");
+      let all = [];
+      try { all = JSON.parse(fs.readFileSync(heldPath, "utf8")); } catch {}
+      fs.writeFileSync(heldPath, JSON.stringify([...all, ...held], null, 1));
+      console.log(`保留(要確認): ${held.length}件(data/whitekey-held.json)`);
+    }
     console.log(`完了: 登録${entered}件 / すでにあるため入力しない${duplicates}件${stopped ? " / 停止: " + stopped : ""}`);
     if (stopped) process.exitCode = 1;
   } catch (err) {

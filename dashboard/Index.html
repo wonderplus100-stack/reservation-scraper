@@ -349,10 +349,11 @@
   }
   function amountTag(n) {
     if (typeof n.amount !== "number") return "";
-    // 事前決済は支払い済みなので、whitekeyの料金は0円(元の支払額は、ポインタを乗せると出る)
+    // 事前決済は支払い済みなので、whitekeyの料金は0円。画面には、支払い済みの金額が分かるように出す
     if (n.prepaid) {
-      const paid = typeof n.paidAmount === "number" ? `支払い済み: ${n.paidAmount.toLocaleString("ja-JP")}円` : "支払い済み";
-      return `<span class="guest-tag amount prepaid" title="${paid}">0円(事前決済)</span>`;
+      const paid = typeof n.paidAmount === "number" ? n.paidAmount.toLocaleString("ja-JP") + "円" : "";
+      const tip = paid ? `支払い済み: ${paid}(whitekeyへの入力は0円です)` : "支払い済み(whitekeyへの入力は0円です)";
+      return `<span class="guest-tag amount prepaid" title="${tip}">事前決済${paid ? " " + paid : ""}</span>`;
     }
     const yen = n.amount.toLocaleString("ja-JP") + "円";
     return n.amountGuess
@@ -647,6 +648,7 @@
     const weight = (n) => 1 + (n.companions || 0);
     const countOf = (pred) => event.names.filter(pred).reduce((sum, n) => sum + weight(n), 0);
     const prepaidCount = countOf((n) => n.prepaid);
+    const prepaidPaidSum = event.names.reduce((sum, n) => sum + (n.prepaid && typeof n.paidAmount === "number" ? n.paidAmount * weight(n) : 0), 0);
     const amountSum = event.names.reduce((sum, n) => sum + (typeof n.amount === "number" ? n.amount * weight(n) : 0), 0);
     container.innerHTML = `
       <div class="event-card">
@@ -660,7 +662,7 @@
           <span class="stat-chip male">男性 <b>${countOf((n) => n.gender === "男性")}</b></span>
           <span class="stat-chip female">女性 <b>${countOf((n) => n.gender === "女性")}</b></span>
           <span class="stat-chip">不明 <b>${countOf((n) => !n.gender)}</b></span>
-          ${prepaidCount ? `<span class="stat-chip prepaid-chip">事前決済 <b>${prepaidCount}</b></span>` : ""}
+          ${prepaidCount ? `<span class="stat-chip prepaid-chip" title="事前決済で支払い済みの人数と金額(whitekeyの料金は0円で入力します)">事前決済 <b>${prepaidCount}</b>${prepaidPaidSum ? " 支払い済み計 <b>" + prepaidPaidSum.toLocaleString("ja-JP") + "円</b>" : ""}</span>` : ""}
           ${amountSum ? `<span class="stat-chip sum">当日の料金合計(目安) <b>${amountSum.toLocaleString("ja-JP")}円</b></span>` : ""}
         </div>
         <div class="stat-row">
