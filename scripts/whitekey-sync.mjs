@@ -1,10 +1,12 @@
 import "dotenv/config";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   OFFICIAL_EVENTS_SHEET,
   RAW_DATA_SHEET,
   appendWhitekeyLedger,
+  getConfigValue,
   readPlatformEventMap,
   readSheetAsObjects,
   readWhitekeyLedger,
@@ -28,7 +30,8 @@ import { warmDashboardCache } from "../lib/dashboardWarm.mjs";
 //   夜20時(当日+曜日ごとの範囲) / 当日の朝9時 / 当日のイベントの開始30分前 / 開始5分前
 //  - 対象のイベントについて、まず最新の予約を取り直し、台帳(WhitekeyLedger)に無い予約だけを入力する(二重入力しない)。
 //  - whitekeyに該当パーティーが無い予約は入れず、未入力一覧(WhitekeyPending)に残してダッシュボードに出す。
-//  - 登録(書き込み)は --commit または WHITEKEY_COMMIT=true のときだけ。それ以外は「入れる予定」を表示するだけ。
+//  - 登録(書き込み)は --commit、.env の WHITEKEY_COMMIT=true、またはスプレッドシート Config の whitekeyCommit=true のときだけ。
+//    それ以外は「入れる予定」を表示するだけ。Config 側は scripts/whitekey-switch.mjs on|off で、どのPCからでも切り替えられる(専用PCの.envを触らずに止められる)。
 //  - 動かすPCは1台だけにする: .env に WHITEKEY_ENABLED=true があるPCでのみ動く(他のPCは何もしない)。
 //
 // 使い方: node scripts/whitekey-sync.mjs [--commit] [--now=2026-11-30T20:00] [--event=<公式イベントID>] [--limit=N]
@@ -111,16 +114,18 @@ async function main() {
     process.exit(2);
   }, (Number(arg("timeout")) || 15) * 60 * 1000).unref();
   const sheetId = process.env.SHEET_ID;
-  const commit = process.argv.includes("--commit") || process.env.WHITEKEY_COMMIT === "true";
+  const configCommit = (await getConfigValue(sheetId, "whitekeyCommit")).toLowerCase() === "true";
+  const commit = process.argv.includes("--commit") || process.env.WHITEKEY_COMMIT === "true" || configCommit;
   const now = arg("now") ? new Date(arg("now")) : new Date();
   const forcedEvent = arg("event");
   const limit = Number(arg("limit")) || 40; // 1回に入れる最大件数(想定外の大量入力を防ぐ上限)
   // --no-refresh: 対象イベントの予約を取り直さず、RawData(定期取得の最新)で入力する(まとめて入力する時に、取り直しの待ちを省く)
-  // --hold-same-sei: すでに同じ姓の受付(完了)が同じパーティーにある予約は、入力せず保留して一覧に出す(読みの違いによる二重入力を避ける。
-  //   姓名の完全一致での重複判定は、従来どおり常に行う)。保留は data/whitekey-held.json に書き出す。
+  // 保留(既定で有効。--no-hold で無効): すでに同じ姓、または姓名のカナがほぼ同じ(違い2文字以内・同性)の受付(完了)が
+  //   同じパーティーにある予約は、入力せず保留して一覧に出す(読みの違いによる二重入力を避ける。
+  //   姓名の完全一致での重複判定は、常に行う)。保留は data/whitekey-held.json に書き出す。
   // --timeout=分: この実行の上限時間(既定15分)
   const noRefresh = process.argv.includes("--no-refresh");
-  const holdSameSei = process.argv.includes("--hold-same-sei");
+  const holdSameSei = !process.argv.includes("--no-hold"); // 既定で有効(2026-11-16)。--no-hold で無効にできる
   const held = [];
 
   const [official, raw, ledger, platformEventMap] = await Promise.all([
@@ -324,7 +329,8 @@ async function main() {
     }
     if (!stopped) markDone();
     const ok = !stopped;
-    await reportStatus(sheetId, { ok, rowCount: entered, message: stopped || notes.join(" / ") });
+    const heldNote = held.length ? `保留(同じ人の可能性・要確認)${held.length}件: ` + held.slice(0, 6).map((h) => `${h.date} ${h.venue}${h.time} ${h.name}`).join(" / ") + (held.length > 6 ? " ほか" : "") : "";
+    await reportStatus(sheetId, { ok, rowCount: entered, message: stopped || [`実行PC ${os.hostname()}${commit ? " / 登録あり" : " / 予定表示のみ"}`, ...notes, heldNote].filter(Boolean).join(" / ") });
     if (held.length > 0) {
       fs.mkdirSync("data", { recursive: true });
       const heldPath = path.resolve("data", "whitekey-held.json");
