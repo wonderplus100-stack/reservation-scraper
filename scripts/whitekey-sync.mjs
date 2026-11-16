@@ -150,7 +150,7 @@ async function main() {
   if (due.length === 0 && !pendingIsStale()) {
     markDone();
     // 動いていることがダッシュボードで分かるよう、「確認した時刻」だけは記録する。
-    await reportStatus(sheetId, { ok: true, rowCount: 0, message: "" });
+    await reportStatus(sheetId, { ok: true, rowCount: 0, message: `実行PC ${os.hostname()}${commit ? " / 登録あり" : " / 予定表示のみ"}(確認のみ・実行する枠なし)` });
     return;
   }
 
