@@ -89,7 +89,9 @@ async function refreshPending({ sheetId, raw, official, ledger, wk }) {
     const key = ymd(date);
     if (!partiesByDate.has(key)) {
       await showDate(wk.page, key);
-      partiesByDate.set(key, annotateParties(await readParties(wk.page)));
+      // 開始後のパーティーは「受付」ボタンが無くなる。未入力一覧では、パーティーが「ある」ものとして扱う
+      // (以前は、今日開催済みのパーティーが「whitekeyにパーティーなし」と誤って並んだ)。
+      partiesByDate.set(key, annotateParties(await readParties(wk.page)).map((p) => ({ ...p, hasReceptionButton: true })));
     }
     const { state } = matchParty(entry, partiesByDate.get(key));
     if (state !== "一致") {

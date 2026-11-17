@@ -23,3 +23,5 @@ rem kokuchpro: GitHub Actions (every 30 min) is the usual route, but GitHub IPs 
 rem (all 3 accounts timed out from 2026-11-15). Collect it here too, so it never goes stale.
 "C:\Program Files\nodejs\node.exe" run.mjs --only=kokuchpro >> logs\peatix-scheduled.log 2>&1
 "C:\Program Files\nodejs\node.exe" run.mjs --only=jimoty >> logs\peatix-scheduled.log 2>&1
+rem Katakana names for the dashboard copy button (adds only new names; failures are ignored).
+"C:\Program Files\nodejs\node.exe" scripts\build-name-kana.mjs --cap=400 >> logs\peatix-scheduled.log 2>&1

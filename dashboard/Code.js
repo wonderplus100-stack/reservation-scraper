@@ -53,6 +53,19 @@ function readObjects_(sheet) {
 function buildDashboardData_() {
   const ss = SpreadsheetApp.openById(getSheetId_());
   const rawRows = readObjects_(ss.getSheetByName(RAW_DATA_SHEET));
+  // 予約者名 → カタカナ(「名前一覧をコピー」を全員カタカナにするため)。媒体のフリガナがある予約は、そちらを優先する。
+  // 表は scripts/build-name-kana.mjs が作る(NameKana シート)。
+  const nameKanaSheet = ss.getSheetByName("NameKana");
+  const nameKana = new Map();
+  if (nameKanaSheet) readObjects_(nameKanaSheet).forEach((r) => nameKana.set(String(r.name || "").trim(), String(r.katakana || "").trim()));
+  function katakanaOf_(name, readingKatakana) {
+    const reading = String(readingKatakana || "").trim();
+    if (reading) return reading;
+    const m = String(name).match(/(同行d+)$/);
+    const base = String(name).replace(/(同行d+)$/, "").trim();
+    const kana = nameKana.get(base);
+    return kana ? kana + (m ? m[0] : "") : name;
+  }
   const eventMaster = readObjects_(ss.getSheetByName(EVENT_MASTER_SHEET));
   const officialEventsSheet = ss.getSheetByName(OFFICIAL_EVENTS_SHEET);
   const officialEvents = officialEventsSheet ? readObjects_(officialEventsSheet) : [];
@@ -123,7 +136,7 @@ function buildDashboardData_() {
       const name = String(row.reservationName || "").trim();
       // カタカナ表記: ふりがな列からの変換値があればそれを使い、なければ
       // (Googleフォーム以外など、ふりがな情報が無い媒体)元の氏名表記のまま。
-      const katakana = String(row.readingKatakana || "").trim() || name;
+      const katakana = katakanaOf_(name, row.readingKatakana);
       // 金額と性別(媒体のチケット名・性別欄から判断。分からない時は空)。
       // 自動入力で男女を判定する時と同じ考え方で表示する(分からなければ男性として入力される)。
       group.uniqueNames.set(normalizedName, {
@@ -919,7 +932,7 @@ function doPost(e) {
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
 // 入力・集計の対象にしない予約の状態(lib/whitekeyRules.mjs の INACTIVE_STATUS と同じ。変える時は両方そろえること)。
 const INACTIVE_STATUS_ = /キャンセル|払い戻し|払戻|返金|無効|取消|不参加/;
-const DASH_CACHE_PREFIX_ = "dashboard_v16"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v17"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 
