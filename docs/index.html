@@ -639,8 +639,20 @@
 
   // クリップボードにコピーする一覧テキストを組み立てる。
   // カタカナ氏名のみ、1行1名(ユーザー指示: コピーはカタカナ名だけでよい)。
+  // コピーする氏名の頭に、取得元の印を付ける(ユーザー指定 2026-11-17):
+  //   こくちーずのEnjoy Japan=EJ / PeatixのJua Party=JP / Wonder+(Googleフォーム・LP予約一覧・Peatix・こくちーずのWonder+自身)=WP / イベマド=EM。
+  //   Wonder+公式サイトとこくちーずのWhitekeyは、印を付けない(指定なし)。
+  function copyPrefix(source) {
+    const text = String(source || "");
+    const platform = text.split("/")[0];
+    if (platform === "peatix") return /jua/i.test(text) ? "JP" : "WP";
+    if (platform === "kokuchpro") return /enjoy/i.test(text) ? "EJ" : /whitekey/i.test(text) ? "" : "WP";
+    if (platform === "googleForms") return "WP";
+    if (platform === "evemado") return "EM";
+    return "";
+  }
   function buildCopyText(event) {
-    return event.names.map((n) => n.katakana || n.name).join("\n");
+    return event.names.map((n) => copyPrefix(n.source) + (n.katakana || n.name)).join("\n");
   }
 
   // 媒体コードを画面表示用のラベルに変換する("peatix/Jua Party" → "Peatix/Jua Party" 等)。
