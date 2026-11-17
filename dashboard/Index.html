@@ -592,7 +592,7 @@
   function copyPrefix(source) {
     const text = String(source || "");
     const platform = text.split("/")[0];
-    if (platform === "peatix") return /jua/i.test(text) ? "JP" : "WP";
+    if (platform === "peatix") return /jua/i.test(text) ? "JP" : "P"; // PeatixのWonder Plusは、whitekeyへの自動入力と同じ「P」(ユーザー指定 2026-11-17)
     if (platform === "kokuchpro") return /enjoy/i.test(text) ? "EJ" : /whitekey/i.test(text) ? "" : "WP";
     if (platform === "googleForms") return "WP";
     if (platform === "evemado") return "EM";

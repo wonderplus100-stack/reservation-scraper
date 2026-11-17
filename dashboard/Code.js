@@ -480,6 +480,8 @@ function isDummyName_(name) {
 const EXCLUDED_PERSON_PATTERN_ = /高杉裕輔|タカスギユウスケ|たかすぎゆうすけ|yusuketakasugi|takasugiyusuke/i;
 function isExcludedPerson_(name) {
   const text = String(name || "").normalize("NFKC").replace(/\s/g, "");
+  // 氏名欄がURL(「https://share.google/…」等)のお客様は、一覧から外す(ユーザー指定 2026-11-17)
+  if (/^https?:\/\//i.test(text)) return true;
   return Boolean(text) && EXCLUDED_PERSON_PATTERN_.test(text);
 }
 
@@ -932,7 +934,7 @@ function doPost(e) {
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
 // 入力・集計の対象にしない予約の状態(lib/whitekeyRules.mjs の INACTIVE_STATUS と同じ。変える時は両方そろえること)。
 const INACTIVE_STATUS_ = /キャンセル|払い戻し|払戻|返金|無効|取消|不参加/;
-const DASH_CACHE_PREFIX_ = "dashboard_v17"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v18"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 
