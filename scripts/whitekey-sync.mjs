@@ -39,7 +39,7 @@ import { warmDashboardCache } from "../lib/dashboardWarm.mjs";
 const PENDING_REFRESH_MS = 60 * 60 * 1000;
 const RUNNER = "このPC";
 // 入力する取得先。Peatixは、カフェ会系・朝活・レギュラー異業種交流会のイベントだけ(lib/whitekeyRules.mjs)。
-const SOURCES = ["kokuchpro", "wpBookings", "peatix"];
+const SOURCES = ["kokuchpro", "wpBookings", "peatix", "googleForms", "evemado"];
 
 function arg(name) {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -310,6 +310,12 @@ async function main() {
         await appendWhitekeyLedger(sheetId, [ledgerRow]);
         ledger[entry.bookingKey] = ledgerRow;
         entered += 1;
+        // 同じ実行の中で、同じ人が別の取得元(フォーム・こくちーず・イベマド等)にもいた時に、二重に入れないよう、
+        // いま入れた受付を、このパーティーの「すでにある受付」に加える(完全一致・保留の判定に使われる)。
+        registrantsByParty.get(party.partycode).push({
+          kana: entry.people[0].sei + " " + entry.people[0].mei,
+          gender: entry.sexkbn === "2" ? "女" : "男", keiyu: entry.keiyu.label, status: "完了"
+        });
         // 一覧に戻り、完了人数が増えたかで登録を確認する
         await returnToList(wk.page);
         shownDate = null;
