@@ -27,7 +27,7 @@ import { warmDashboardCache } from "../lib/dashboardWarm.mjs";
 
 // whitekeyの受付登録への自動入力(リスト更新)。専用PCのタスクスケジューラが5分おきに呼び出し、
 // lib/whitekeySchedule.mjs のスケジュールに当たったイベントだけを処理する:
-//   夜20時(当日+曜日ごとの範囲) / 当日の朝9時 / 当日のイベントの開始30分前 / 開始5分前
+//   夜20時(当日+曜日ごとの範囲) / 当日の朝9時 / 当日のイベントの開始1時間前 / 開始30分前 / 開始5分前
 //  - 対象のイベントについて、まず最新の予約を取り直し、台帳(WhitekeyLedger)に無い予約だけを入力する(二重入力しない)。
 //  - whitekeyに該当パーティーが無い予約は入れず、未入力一覧(WhitekeyPending)に残してダッシュボードに出す。
 //  - 登録(書き込み)は --commit、.env の WHITEKEY_COMMIT=true、またはスプレッドシート Config の whitekeyCommit=true のときだけ。
@@ -137,7 +137,7 @@ async function main() {
     readPlatformEventMap(sheetId)
   ]);
 
-  // いま実行すべき枠(夜20時 / 朝9時 / 開始30分前 / 開始5分前)に当たるイベント
+  // いま実行すべき枠(夜20時 / 朝9時 / 開始1時間前 / 開始30分前 / 開始5分前)に当たるイベント
   const simulated = Boolean(arg("now")) || Boolean(forcedEvent);
   const stamps = readStamps();
   const { events: dueEventIds, keys: slotKeys, slots } = forcedEvent
