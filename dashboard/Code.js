@@ -61,10 +61,13 @@ function buildDashboardData_() {
   function katakanaOf_(name, readingKatakana) {
     const reading = String(readingKatakana || "").trim();
     if (reading) return reading;
-    const m = String(name).match(/(同行d+)$/);
-    const base = String(name).replace(/(同行d+)$/, "").trim();
+    const m = String(name).match(/\(同行\d+\)$/);
+    const base = String(name).replace(/\(同行\d+\)$/, "").trim();
     const kana = nameKana.get(base);
-    return kana ? kana + (m ? m[0] : "") : name;
+    if (kana) return kana + (m ? m[0] : "");
+    // 表に無い名前でも、氏名に添えられた決済済みの文言(「・事前払い済」等)は、コピーに入れない
+    const stripped = base.replace(/[・･\s　(（\[【「]*(?:事前(?:払い?|支払い?|決済|入金|振込)(?:済み?|ずみ|完了)?|(?:支払い?|決済|入金|振込|払い?)(?:済み?|ずみ|完了)|先払い|前払い)[)）\]】」]*/gi, " ").replace(/\s+/g, " ").trim();
+    return (stripped || base) + (m ? m[0] : "");
   }
   const eventMaster = readObjects_(ss.getSheetByName(EVENT_MASTER_SHEET));
   const officialEventsSheet = ss.getSheetByName(OFFICIAL_EVENTS_SHEET);
@@ -936,7 +939,7 @@ function doPost(e) {
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
 // 入力・集計の対象にしない予約の状態(lib/whitekeyRules.mjs の INACTIVE_STATUS と同じ。変える時は両方そろえること)。
 const INACTIVE_STATUS_ = /キャンセル|払い戻し|払戻|返金|無効|取消|不参加/;
-const DASH_CACHE_PREFIX_ = "dashboard_v19"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v20"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 
