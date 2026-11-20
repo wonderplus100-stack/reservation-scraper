@@ -4,10 +4,12 @@ import { openPartyList, openWhitekey, showDate } from "../lib/whitekeyClient.mjs
 
 // whitekeyの受付1件の料金を変更する(ユーザーの指示のあった1件だけ)。受付画面の「料金(gaku0)」を書き換えて「更新」を押す。
 // 対象は、パーティーの受付(完了)から「ちょうど1件」に決まる時だけ。実行は --commit を付けた時だけ(付けなければ、対象を表示するだけ)。
-// 使い方: node scripts/whitekey-set-fee.mjs --date=2026/11/16 --party=JP2026110934316 --sei=アラミ --mei=ジュンヤ --keiyu=Peatix --fee=0 [--commit]
+// 使い方: node scripts/whitekey-set-fee.mjs --date=2026/11/16 --party=JP2026110934316 --sei=アラミ --mei=ジュンヤ --keiyu=Peatix --fee=0 [--new-sei=EJけむさん --new-mei=1] [--commit]
+//   --new-sei / --new-mei を付けると、料金と一緒に、カナの姓・名も書き換える(読みが不適切だった受付の訂正用)。
 const arg = (n, d = "") => (process.argv.find((a) => a.startsWith(`--${n}=`)) || `--${n}=${d}`).slice(n.length + 3);
 const date = arg("date"), partycode = arg("party"), sei = arg("sei"), mei = arg("mei"), keiyu = arg("keiyu");
 const fee = arg("fee");
+const newSei = arg("new-sei"), newMei = arg("new-mei");
 const commit = process.argv.includes("--commit");
 if (!date || !partycode || !sei || fee === "") throw new Error("--date --party --sei --fee を指定してください");
 
@@ -51,6 +53,8 @@ try {
     const shown = normKana(`${await page.inputValue("#kana_sei0")} ${await page.inputValue("#kana_mei0")}`);
     if (shown !== normKana(hit.kana)) throw new Error(`変更画面の氏名が一致しません(${shown})`);
     await page.fill("#gaku0", fee);
+    if (newSei) await page.fill("#kana_sei0", newSei);
+    if (newMei) await page.fill("#kana_mei0", newMei);
     await Promise.all([page.waitForLoadState("domcontentloaded"), page.locator("#btnChange0").evaluate((el) => el.click())]);
     await page.waitForTimeout(2500);
     page.off("dialog", onDialog);
@@ -62,7 +66,8 @@ try {
       await page.waitForTimeout(2500);
     }
     await showDate(page, date);
-    const after = (await readRows(page)).find((r) => normKana(r.kana) === normKana(hit.kana) && r.status === "完了");
+    const afterKana = newSei ? `${newSei} ${newMei || ""}` : hit.kana;
+    const after = (await readRows(page)).find((r) => normKana(r.kana) === normKana(afterKana) && r.status === "完了");
     console.log(`確認: ${after ? after.kana + " 料金 " + after.fee + "円 状態 " + after.status : "見つかりません"}`);
   }
 } finally {
