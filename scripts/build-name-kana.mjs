@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { RAW_DATA_SHEET, readNameKana, readSheetAsObjects, replaceNameKana } from "../lib/sheetsClient.mjs";
 import { ensureLearnedLoaded } from "../lib/nameReadings.mjs";
-import { toWhitekeyName } from "../lib/whitekeyName.mjs";
+import { emailLocalLetters, hasPaymentWords, toWhitekeyName } from "../lib/whitekeyName.mjs";
 
 // 予約者名 → カタカナ(「セイ メイ」)の対応表(NameKana シート)を作る。ダッシュボードの「名前一覧をコピー」が、
 // 全員カタカナでコピーできるようにするため。媒体にフリガナ(readingKatakana)がある予約は、そちらを使うので対象外。
@@ -34,11 +34,13 @@ const best = new Map();
 for (const r of raw) {
   if (String(r.readingKatakana || "").trim()) continue;
   const key = baseName(r.reservationName);
-  if (!key || KATA_ONLY.test(key) || /@/.test(key)) continue;
+  if (!key || KATA_ONLY.test(key)) continue;
   const dist = distance(r.canonicalEventId);
   if (!best.has(key) || dist < best.get(key)) best.set(key, dist);
 }
-const todo = [...best.entries()].filter(([name]) => refresh || !existing.has(name)).sort((a, b) => a[1] - b[1]).slice(0, cap);
+// 決済済みの文言を含む名前・メールアドレスの名前は、以前の変換が不適切だったため、表にあっても作り直す(2026-11-20)
+const needsRebuild = (name) => hasPaymentWords(name) || emailLocalLetters(name).length >= 2;
+const todo = [...best.entries()].filter(([name]) => refresh || !existing.has(name) || needsRebuild(name)).sort((a, b) => a[1] - b[1]).slice(0, cap);
 console.log(`カタカナにする名前: 対象 ${best.size}件 / 今回 ${todo.length}件(表にある名前 ${existing.size}件)`);
 
 const now = new Date().toISOString();

@@ -5,15 +5,18 @@ import path from "node:path";
 import {
   OFFICIAL_EVENTS_SHEET,
   RAW_DATA_SHEET,
+  appendWhitekeyCancelled,
   appendWhitekeyLedger,
   getConfigValue,
   readPlatformEventMap,
   readSheetAsObjects,
+  readWhitekeyCancelled,
   readWhitekeyLedger,
   replaceWhitekeyPending,
   updateSourceStatus
 } from "../lib/sheetsClient.mjs";
 import { fetchEventPostIds } from "../lib/eventPrices.mjs";
+import { executeCancels, findCancelCandidates } from "../lib/whitekeyCancelSync.mjs";
 import { buildEntries, isUpcoming } from "../lib/whitekeyPlan.mjs";
 import { annotateParties, findDuplicate, matchParty, normKana } from "../lib/whitekeyMatch.mjs";
 import { openPartyList, openWhitekey, readParties, readRegistrants, showDate } from "../lib/whitekeyClient.mjs";
@@ -329,6 +332,30 @@ async function main() {
         try { await leaveWithoutRegistering(wk.page); } catch {}
       }
     }
+    // 3.5 予約側でキャンセルになった予約を、whitekeyでも「キャンセル」にする(自動入力した予約だけ。登録する設定の時だけ)。
+    // 1回の実行で最大8件。残りは、次の5分おきの実行で行う。結果は、WhitekeyCancelled シートに記録する。
+    let cancelNote = "";
+    if (commit && !stopped) {
+      try {
+        const cancelled = await readWhitekeyCancelled(sheetId);
+        const { candidates } = findCancelCandidates({ raw: overlay, ledger, cancelledSet: new Set(Object.keys(cancelled)) });
+        const doable = candidates.filter((c) => !c.manual);
+        const manual = candidates.filter((c) => c.manual);
+        if (doable.length > 0) {
+          console.log(`キャンセルの反映: 候補 ${doable.length}件`);
+          const results = await executeCancels(wk.page, doable, { commit: true, limit: 8 });
+          const rows = results.filter((r) => ["キャンセル", "既にキャンセル済み"].includes(r.result)).map((r) => ({ bookingKey: r.ledger.bookingKey, partycode: r.ledger.partycode, eventDate: r.ledger.eventDate, name: r.ledger.name, result: r.result, cancelledAt: new Date().toISOString() }));
+          await appendWhitekeyCancelled(sheetId, rows);
+          const did = results.filter((r) => r.result === "キャンセル").length;
+          if (did > 0) cancelNote = `キャンセル反映${did}件`;
+          const failed = results.filter((r) => /失敗|確認できません|決まりません/.test(r.result));
+          if (failed.length > 0) cancelNote += (cancelNote ? " / " : "") + `キャンセル反映の要確認${failed.length}件`;
+        }
+        if (manual.length > 0) cancelNote += (cancelNote ? " / " : "") + `同伴者ありのキャンセル(手作業)${manual.length}件: ` + manual.slice(0, 3).map((m) => `${m.ledger.eventDate} ${m.ledger.venue}${m.ledger.time} ${m.ledger.name}`).join(" / ");
+      } catch (err) {
+        console.warn("キャンセルの反映に失敗しました:", err.message);
+      }
+    }
     // 4. 未入力一覧の更新(1時間に1回まで)
     try {
       await refreshPending({ sheetId, raw: overlay, official, ledger, wk });
@@ -338,7 +365,7 @@ async function main() {
     if (!stopped) markDone();
     const ok = !stopped;
     const heldNote = held.length ? `保留(同じ人の可能性・要確認)${held.length}件: ` + held.slice(0, 6).map((h) => `${h.date} ${h.venue}${h.time} ${h.name}`).join(" / ") + (held.length > 6 ? " ほか" : "") : "";
-    await reportStatus(sheetId, { ok, rowCount: entered, message: stopped || [`実行PC ${os.hostname()}${commit ? " / 登録あり" : " / 予定表示のみ"}`, ...notes, heldNote].filter(Boolean).join(" / ") });
+    await reportStatus(sheetId, { ok, rowCount: entered, message: stopped || [`実行PC ${os.hostname()}${commit ? " / 登録あり" : " / 予定表示のみ"}`, ...notes, heldNote, cancelNote].filter(Boolean).join(" / ") });
     if (held.length > 0) {
       fs.mkdirSync("data", { recursive: true });
       const heldPath = path.resolve("data", "whitekey-held.json");

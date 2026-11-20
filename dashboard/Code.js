@@ -450,7 +450,7 @@ function buildDashboardData_() {
 // whitekeyに入れられていない予約(パーティーが無い等)。whitekey自動入力(scripts/whitekey-sync.mjs)が
 // WhitekeyPending シートに書く。
 // ダミー判定(lib/whitekeyRules.mjs の isDummyName と同じ規則。変える時は両方そろえること)。
-const DUMMY_NAME_PATTERN_ = /ウィル|ウイル|うぃる|ういる|ホワイトキー|ほわいとき|ﾎﾜｲﾄｷｰ|whitekey|wonder|ワンダー|他団体|多団体/i;
+const DUMMY_NAME_PATTERN_ = /ウィル|ウイル|うぃる|ういる|ホワイトキー|ほわいとき|ﾎﾜｲﾄｷｰ|whitekey|wonder|ワンダー|他団体|多団体|他社送客/i;
 const SYMBOL_ONLY_PATTERN_ = /^[\d\s\-_.・★☆※]+$/;
 // 公式イベント名から、昼カフェ会の「どの部か」を判定する。両方参加(通し)=both / 第2部=p2 / 第1部=p1 / それ以外は空。
 function slotPartOf_(eventName) {
@@ -524,7 +524,9 @@ function personInfo_(group, row) {
     }
   }
   // 事前決済(チケット名に「事前決済」を含む / Peatix「Jua Party」は全て事前決済)は支払い済みなので、料金は0円(lib/whitekeyPlan.mjs の isPrepaid と同じ)。
-  const prepaid = /事前決済/.test(String(row.ticketName || "")) || (String(row.platform || "") === "peatix" && /jua/i.test(String(row.account || "")));
+  // 予約者名に決済済みの文言(「事前決済」「事前払い済」「支払い済み」など)が入っている予約も、事前決済と同じ扱い(lib/whitekeyName.mjs の hasPaymentWords と同じ)。
+  const paymentWords = /(?:事前(?:払い?|支払い?|決済|入金|振込)(?:済み?|ずみ|完了)?|(?:支払い?|決済|入金|振込|払い?)(?:済み?|ずみ|完了)|先払い|前払い)/i;
+  const prepaid = /事前決済/.test(String(row.ticketName || "")) || paymentWords.test(String(row.reservationName || "")) || (String(row.platform || "") === "peatix" && /jua/i.test(String(row.account || "")));
   if (prepaid) {
     paidAmount = amount;
     amount = 0;
@@ -934,7 +936,7 @@ function doPost(e) {
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
 // 入力・集計の対象にしない予約の状態(lib/whitekeyRules.mjs の INACTIVE_STATUS と同じ。変える時は両方そろえること)。
 const INACTIVE_STATUS_ = /キャンセル|払い戻し|払戻|返金|無効|取消|不参加/;
-const DASH_CACHE_PREFIX_ = "dashboard_v18"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v19"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 
