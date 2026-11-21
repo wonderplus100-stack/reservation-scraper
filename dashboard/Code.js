@@ -81,6 +81,8 @@ function buildDashboardData_() {
   const mapByKey = new Map(
     platformMapRows.map((r) => [`${r.platform}|||${r.platformEventId}`, String(r.officialEventId || "").trim()])
   );
+  // 人が紐づけた(source=manual)ものは、あり得ない組み合わせの確認の対象にしない(人の判断を尊重する)。
+  const manualKeys = new Set(platformMapRows.filter((r) => String(r.source || "") === "manual").map((r) => `${r.platform}|||${r.platformEventId}`));
   // ダッシュボードで人が紐づけた直後(次回のスクレイピング前)でも即座に
   // 反映されるよう、RawDataに保存済みのcanonicalEventIdだけに頼らず、
   // 読み取り時にも「媒体のイベントID」「EventMaster」の対応表を引き直す。
@@ -92,15 +94,29 @@ function buildDashboardData_() {
   );
 
   // 公式イベントに紐づいた行の公式イベントIDを返す。紐づいていなければnull。
+  // 紐づけ先として、あり得る組み合わせか(lib/officialEventMatcher.mjs の isPlausibleMapping と同じ)。
+  // 題名が恋愛・合コン・婚活・街コンのイベント、または題名の開始時刻が公式イベントと3時間を超えてずれるものは、紐づけない。
+  const officialTimeById = new Map(officialEvents.map((e) => [String(e.canonicalEventId || "").trim(), String(e.time || "")]));
+  function plausibleLink_(row, officialId) {
+    const title = String(row.rawEventName || "");
+    if (/合コン|恋愛|恋活|婚活|街コン/.test(title)) return false;
+    const m = title.match(/d{1,2}s*月s*d{1,2}s*日s*[（(][日月火水木金土][）)]s*(d{1,2}):(d{2})/);
+    const t = String(officialTimeById.get(officialId) || "").match(/(d{1,2}):(d{2})/);
+    if (!m || !t) return true;
+    return Math.abs(Number(m[1]) * 60 + Number(m[2]) - (Number(t[1]) * 60 + Number(t[2]))) <= 180;
+  }
+
   function resolveOfficialId_(row) {
     if (row.platformEventId) {
       const mapped = mapByKey.get(`${row.platform}|||${row.platformEventId}`);
-      if (mapped && officialIds.has(mapped)) return mapped;
+      if (mapped && officialIds.has(mapped) && (manualKeys.has(`${row.platform}|||${row.platformEventId}`) || plausibleLink_(row, mapped))) return mapped;
     }
     const own = String(row.canonicalEventId || "").trim();
-    if (own && officialIds.has(own)) return own;
+    // RawData の canonicalEventId は、人が紐づけた(manual)ものも含む。媒体のイベントIDで manual なら、そのまま使う
+    const ownIsManual = row.platformEventId && manualKeys.has(`${row.platform}|||${row.platformEventId}`);
+    if (own && officialIds.has(own) && (ownIsManual || plausibleLink_(row, own))) return own;
     const viaMaster = masterLookup.get(`${row.platform}|||${row.account}|||${String(row.rawEventName || "").trim()}`);
-    if (viaMaster && officialIds.has(viaMaster)) return viaMaster;
+    if (viaMaster && officialIds.has(viaMaster) && plausibleLink_(row, viaMaster)) return viaMaster;
     return null;
   }
 
@@ -939,7 +955,7 @@ function doPost(e) {
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
 // 入力・集計の対象にしない予約の状態(lib/whitekeyRules.mjs の INACTIVE_STATUS と同じ。変える時は両方そろえること)。
 const INACTIVE_STATUS_ = /キャンセル|払い戻し|払戻|返金|無効|取消|不参加/;
-const DASH_CACHE_PREFIX_ = "dashboard_v20"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v21"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 

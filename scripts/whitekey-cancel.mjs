@@ -113,9 +113,17 @@ try {
     try {
       await Promise.all([wk.page.waitForLoadState("domcontentloaded"), wk.page.locator("a.orderChange").nth(hit.changeIndex).evaluate((el) => el.click())]);
       await wk.page.waitForSelector("#btnTorikeshi0", { timeout: 60000 });
-      const shown = normKana(`${await wk.page.inputValue("#kana_sei0")} ${await wk.page.inputValue("#kana_mei0")}`);
-      if (shown !== normKana(hit.kana)) throw new Error(`変更画面の氏名が一致しません(${shown} / ${normKana(hit.kana)})`);
-      await Promise.all([wk.page.waitForLoadState("domcontentloaded"), wk.page.locator("#btnTorikeshi0").evaluate((el) => el.click())]);
+      // 受付画面には、同じ申込の代表者(0)と同伴者(1〜7)が並ぶ。氏名が一致する人の「取り消し」を押す(同伴者の行を開いても、その人を探す)。
+      let target = -1;
+      let shown = "";
+      for (let i = 0; i < 8; i += 1) {
+        if (!(await wk.page.locator(`#kana_sei${i}`).count())) break;
+        const name = normKana(`${await wk.page.inputValue(`#kana_sei${i}`)} ${await wk.page.inputValue(`#kana_mei${i}`)}`);
+        if (i === 0) shown = name;
+        if (name === normKana(hit.kana)) { target = i; break; }
+      }
+      if (target < 0) throw new Error(`変更画面に対象の氏名がありません(先頭: ${shown} / 対象: ${normKana(hit.kana)})`);
+      await Promise.all([wk.page.waitForLoadState("domcontentloaded"), wk.page.locator(`#btnTorikeshi${target}`).evaluate((el) => el.click())]);
       await wk.page.waitForTimeout(2500);
       console.log(`  - 取り消しました: ${label} → ${hit.kana} (${item.note || ""})`);
       results.push({ ...item, kana: hit.kana, result: "取消" });

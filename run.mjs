@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { normalizeEventName, normalizeName } from "./lib/normalizeName.mjs";
-import { isOldYearByWeekday, matchOfficialEvent } from "./lib/officialEventMatcher.mjs";
+import { isOldYearByWeekday, isPlausibleMapping, matchOfficialEvent } from "./lib/officialEventMatcher.mjs";
 import {
   RAW_DATA_SHEET,
   UNMAPPED_SHEET,
@@ -203,7 +203,9 @@ async function main() {
     if (row.platformEventId) {
       const mapped = mapByKey.get(platformEventKey(row.platform, row.platformEventId));
       if (mapped && mapped.officialEventId === IGNORE_EVENT_ID) continue; // 人が「対象外」と確定済み
-      const official = mapped ? officialById.get(mapped.officialEventId) : null;
+      let official = mapped ? officialById.get(mapped.officialEventId) : null;
+      // 自動で固定した紐づけ(人が確定した manual は除く)が、あり得ない組み合わせ(恋愛・合コン系の題名・開始時刻が3時間超ずれる)なら、使わない
+      if (official && mapped.source !== "manual" && !isPlausibleMapping(row.rawEventName, official)) official = null;
       if (official) {
         canonicalEventId = official.canonicalEventId;
         canonicalEventName = official.canonicalEventName;
