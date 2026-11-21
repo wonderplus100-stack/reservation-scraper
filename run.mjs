@@ -215,6 +215,9 @@ async function main() {
     if (!canonicalEventId) {
       canonicalEventId = resolveCanonicalEventId(eventMaster, row.platform, row.account, row.rawEventName);
       if (canonicalEventId === IGNORE_EVENT_ID) continue; // 人が「対象外」と確定済み
+      // EventMaster(イベント名→公式イベントの対応表)の紐づけも、あり得ない組み合わせ(恋愛・合コン系・開始時刻が3時間超ずれる・会場が違う)なら使わない
+      // (2026-11-21: 100人合コンの予約者が、10:00のMorningBizに紐づいていた)。
+      if (canonicalEventId && officialById.has(canonicalEventId) && !isPlausibleMapping(row.rawEventName, officialById.get(canonicalEventId))) canonicalEventId = null;
       canonicalEventName = canonicalEventId ? eventMasterById.get(canonicalEventId)?.canonicalEventName : null;
       if (canonicalEventId && officialById.has(canonicalEventId)) {
         pinToPlatformEventMap(row, canonicalEventId, canonicalEventName);

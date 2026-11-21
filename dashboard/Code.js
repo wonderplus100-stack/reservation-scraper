@@ -96,10 +96,15 @@ function buildDashboardData_() {
   // 公式イベントに紐づいた行の公式イベントIDを返す。紐づいていなければnull。
   // 紐づけ先として、あり得る組み合わせか(lib/officialEventMatcher.mjs の isPlausibleMapping と同じ)。
   // 題名が恋愛・合コン・婚活・街コンのイベント、または題名の開始時刻が公式イベントと3時間を超えてずれるものは、紐づけない。
+  const officialVenueById = new Map(officialEvents.map((e) => [String(e.canonicalEventId || "").trim(), String(e.venueKey || e.venue || "")]));
   const officialTimeById = new Map(officialEvents.map((e) => [String(e.canonicalEventId || "").trim(), String(e.time || "")]));
   function plausibleLink_(row, officialId) {
     const title = String(row.rawEventName || "");
     if (/合コン|恋愛|恋活|婚活|街コン/.test(title)) return false;
+    // 会場(エリア): 題名の会場が、公式イベントの会場と違うものは紐づけない
+    const titleVenue = detectVenueKey_(title);
+    const eventVenue = officialVenueById.get(officialId) || "";
+    if (titleVenue && eventVenue && titleVenue !== eventVenue) return false;
     const m = title.match(/d{1,2}s*月s*d{1,2}s*日s*[（(][日月火水木金土][）)]s*(d{1,2}):(d{2})/);
     const t = String(officialTimeById.get(officialId) || "").match(/(d{1,2}):(d{2})/);
     if (!m || !t) return true;
@@ -955,7 +960,7 @@ function doPost(e) {
 // 誰かが開いていれば、2回目以降はすぐ表示される。キャッシュは大きいので、小さく分割して保存する。
 // 入力・集計の対象にしない予約の状態(lib/whitekeyRules.mjs の INACTIVE_STATUS と同じ。変える時は両方そろえること)。
 const INACTIVE_STATUS_ = /キャンセル|払い戻し|払戻|返金|無効|取消|不参加/;
-const DASH_CACHE_PREFIX_ = "dashboard_v21"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
+const DASH_CACHE_PREFIX_ = "dashboard_v22"; // 画面データの形を変えたら数字を上げる(古いキャッシュを使わないため)
 const DASH_CACHE_SECONDS_ = 300;
 const DASH_CACHE_CHUNK_ = 30000; // 文字数。1キー100KB上限に、日本語(最大3バイト/文字)でも収まる大きさ
 
